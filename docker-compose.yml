@@ -1,0 +1,81 @@
+---
+# Quick start:
+#
+#   python3 tools/write_dev_env.py > .env   # auto-populate from local credentials
+#   docker compose up --build
+#
+# Or: cp .env.example .env  then fill in credentials manually.
+
+services:
+
+  tile-server:
+    build: .
+    ports:
+      - "${SERVER_PORT:-8080}:8080"
+    environment:
+      # ── Dell ECS / S3 connection ──────────────────────────────────────────
+      AWS_ENDPOINT_URL: ${AWS_ENDPOINT_URL:-}
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-}
+
+      # ── Databricks — patient/slide metadata ──────────────────────────────
+      DATABRICKS_HOST: ${DATABRICKS_HOST}
+      DATABRICKS_TOKEN: ${DATABRICKS_TOKEN}
+      DATABRICKS_WAREHOUSE_ID: ${DATABRICKS_WAREHOUSE_ID:-0b49b7d78734ad5c}
+
+      # ── Tile settings ─────────────────────────────────────────────────────
+      TILE_SIZE: ${TILE_SIZE:-256}
+      JPEG_QUALITY: ${JPEG_QUALITY:-85}
+
+      # ── Redis cache ───────────────────────────────────────────────────────
+      REDIS_URL: redis://redis:6379
+      TILE_CACHE_TTL: 0        # 0 = no expiry (tiles are immutable)
+      PATIENT_CACHE_TTL: ${PATIENT_CACHE_TTL:-300}   # 5 min for dev; 86400 in prod
+
+      # ── CORS — add the viewer origin so the browser can reach tile APIs ───
+      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:8080,http://localhost:3000,https://cbioportal.org,https://www.cbioportal.org}
+
+      # ── Capacity (tune to host RAM; each open SVS ≈ 50–200 MB) ───────────
+      MAX_OPEN_SLIDES: ${MAX_OPEN_SLIDES:-16}
+      N_WORKERS: ${N_WORKERS:-4}
+
+      # ── fsspec BlockCache — point at a fast local disk (NVMe preferred) ──
+      BLOCKCACHE_PATH: ${BLOCKCACHE_PATH:-}
+      BLOCKCACHE_BLOCK_SIZE: ${BLOCKCACHE_BLOCK_SIZE:-8388608}   # 8 MB
+    volumes:
+      - slide_blocks:/cache/slide-blocks
+    depends_on:
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: ${APP_MEMORY_LIMIT:-4g}
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+
+  redis:
+    image: redis:7-alpine
+    command: >
+      redis-server
+      --maxmemory ${REDIS_MAXMEMORY:-1g}
+      --maxmemory-policy allkeys-lru
+      --save ""
+      --appendonly no
+    restart: unless-stopped
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+
+volumes:
+  redis_data:
+  slide_blocks:  # default named volume for BlockCache (override with host mount for NVMe)

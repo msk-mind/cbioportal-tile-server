@@ -1,0 +1,54 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "cbioportal-tile-server"
+version = "0.1.0"
+description = "WSI tile server for cBioPortal — serves SVS slides from Dell ECS/S3 via tiffslide"
+requires-python = ">=3.11"
+dependencies = [
+    # Web framework
+    "fastapi>=0.111.0",
+    "uvicorn[standard]>=0.30.0",
+    "gunicorn>=22.0.0",
+
+    # WSI reading — pure Python, no OpenSlide C library needed for SVS
+    "tiffslide>=2.4.0",
+    # tifffile is pulled in by tiffslide; pin minimum for zarr aszarr() support.
+    # tifffile 2025.5.21+ removed ZarrTiffStore which tiffslide still requires.
+    "tifffile>=2024.1.1,<2025.5.21",
+    # zarr 3.x broke read_region in tiffslide — pin to 2.x until tiffslide fully supports zarr 3
+    "zarr<3",
+
+    # S3 / Dell ECS
+    "s3fs>=2024.3.0",
+    "fsspec>=2024.3.0",
+    "boto3>=1.34.0",
+
+    # Image encoding
+    "Pillow>=10.3.0",
+
+    # Tile cache (asyncio support is built-in since redis 5)
+    "redis>=5.0.0",
+
+    # Databricks SQL — patient/slide metadata
+    "databricks-sdk>=0.20.0",
+
+    # Observability (optional but useful)
+    "prometheus-fastapi-instrumentator>=7.0.0",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.0",
+    "pytest-asyncio>=0.23",
+    "httpx>=0.27",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["app"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]

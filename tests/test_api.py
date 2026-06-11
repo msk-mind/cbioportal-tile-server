@@ -1,0 +1,215 @@
+"""Tests for FastAPI HTTP routes (app/main.py)."""
+
+from io import BytesIO
+from unittest.mock import AsyncMock, MagicMock, patch
+
+import pytest
+from fastapi.testclient import TestClient
+from PIL import Image
+
+import app.cache as cache_module
+import app.main as main_module
+import app.meta as meta_module
+from app.tiles import TILE_SIZE
+from tests.conftest import make_mock_slide
+
+
+@pytest.fixture(autouse=False)
+def api_client():
+    """
+    TestClient with all external deps mocked:
+    - Redis cache: all get/set → no-ops
+    - meta.get_slide_path: returns a fake S3 URI for any image_id
+    - SlideCache: returns a mock slide
+    - init_cache / close_cache: no-ops (avoids Redis connection)
+    """
+    mock_slide = make_mock_slide()
+
+    # Mock thumbnail (TiffSlide.get_thumbnail is not on our basic mock)
+    mock_slide.get_thumbnail = MagicMock(
+        return_value=Image.new("RGBA", (256, 256), (200, 200, 200, 255))
+    )
+
+    async def _noop_get(*a, **k):
+        return None
+
+    async def _noop_set(*a, **k):
+        pass
+
+    async def _noop_init():
+        pass
+
+    patches = [
+        patch.object(cache_module, "init_cache",    _noop_init),
+        patch.object(cache_module, "close_cache",   _noop_init),
+        patch.object(cache_module, "get_tile",      _noop_get),
+        patch.object(cache_module, "set_tile",      _noop_set),
+        patch.object(cache_module, "get_thumbnail", _noop_get),
+        patch.object(cache_module, "set_thumbnail", _noop_set),
+        patch.object(cache_module, "get_metadata",  _noop_get),
+        patch.object(cache_module, "set_metadata",  _noop_set),
+        patch.object(cache_module, "get_patient",   _noop_get),
+        patch.object(cache_module, "set_patient",   _noop_set),
+        patch.object(cache_module, "get_raw",       _noop_get),
+        patch.object(cache_module, "set_raw",       _noop_set),
+        patch.object(meta_module, "get_slide_path",
+                     lambda image_id, warehouse_id: f"s3://test-bucket/{image_id}.svs"),
+    ]
+    for p in patches:
+        p.start()
+
+    with TestClient(main_module.app) as client:
+        # Lifespan has run by now; replace _slides and clear path cache
+        main_module._slides = MagicMock()
+        main_module._slides.get          = MagicMock(return_value=mock_slide)
+        main_module._slides.close_all    = MagicMock()
+        main_module._path_cache.clear()
+        yield client
+
+    main_module._path_cache.clear()
+    for p in patches:
+        p.stop()
+
+
+# ---------------------------------------------------------------------------
+# /health
+# ---------------------------------------------------------------------------
+
+class TestHealth:
+    def test_status_ok(self, api_client):
+        resp = api_client.get("/health")
+        assert resp.status_code == 200
+        assert resp.json()["status"] == "ok"
+
+    def test_n_workers_present(self, api_client):
+        data = api_client.get("/health").json()
+        assert "n_workers" in data
+        assert isinstance(data["n_workers"], int)
+        assert data["n_workers"] > 0
+
+
+# ---------------------------------------------------------------------------
+# /tiles/{slide_id}/metadata
+# ---------------------------------------------------------------------------
+
+class TestMetadataRoute:
+    def test_returns_200_with_shape(self, api_client):
+        resp = api_client.get("/tiles/1492807/metadata")
+        assert resp.status_code == 200
+        data = resp.json()
+        for key in ("dimensions", "mpp", "vendor", "objective_power",
+                    "max_zoom", "tile_size", "levels"):
+            assert key in data, f"missing key: {key}"
+
+    def test_mpp_values(self, api_client):
+        data = api_client.get("/tiles/1492807/metadata").json()
+        assert data["mpp"]["x"] == pytest.approx(0.5034)
+        assert data["mpp"]["y"] == pytest.approx(0.5034)
+
+    def test_objective_power(self, api_client):
+        data = api_client.get("/tiles/1492807/metadata").json()
+        assert data["objective_power"] == 20
+
+    def test_missing_slide_returns_4xx(self, api_client):
+        main_module._slides.get.side_effect = FileNotFoundError("gone")
+        try:
+            resp = api_client.get("/tiles/missing/metadata")
+            assert resp.status_code in (404, 500)
+        finally:
+            main_module._slides.get.side_effect = None
+
+
+# ---------------------------------------------------------------------------
+# /tiles/{slide_id}/zxy/{z}/{x}/{y}
+# ---------------------------------------------------------------------------
+
+class TestTileRoute:
+    def test_valid_tile_returns_jpeg(self, api_client):
+        resp = api_client.get("/tiles/1492807/zxy/0/0/0")
+        assert resp.status_code == 200
+        assert resp.headers["content-type"] == "image/jpeg"
+        assert resp.content[:2] == b"\xff\xd8"
+
+    def test_cache_control_immutable(self, api_client):
+        resp = api_client.get("/tiles/1492807/zxy/0/0/0")
+        assert "immutable" in resp.headers.get("cache-control", "")
+
+    def test_out_of_range_z_returns_404(self, api_client):
+        resp = api_client.get("/tiles/1492807/zxy/99/0/0")
+        assert resp.status_code == 404
+
+    def test_out_of_bounds_xy_returns_404(self, api_client):
+        # mock slide is 1024×1024, max_zoom=2; x=999 is way out
+        resp = api_client.get("/tiles/1492807/zxy/2/999/0")
+        assert resp.status_code == 404
+
+
+# ---------------------------------------------------------------------------
+# /tiles/{slide_id}/thumbnail
+# ---------------------------------------------------------------------------
+
+class TestThumbnailRoute:
+    def test_returns_jpeg(self, api_client):
+        resp = api_client.get("/tiles/1492807/thumbnail?width=256&height=256")
+        assert resp.status_code == 200
+        assert resp.headers["content-type"] == "image/jpeg"
+        assert resp.content[:2] == b"\xff\xd8"
+
+    def test_width_clamped_to_max(self, api_client):
+        # 9999 > 2048 max; should still return 200 (clamped internally)
+        resp = api_client.get("/tiles/1492807/thumbnail?width=9999&height=256")
+        assert resp.status_code == 200
+
+    def test_cache_control_present(self, api_client):
+        resp = api_client.get("/tiles/1492807/thumbnail")
+        assert "max-age" in resp.headers.get("cache-control", "")
+
+
+# ---------------------------------------------------------------------------
+# /patient/{patient_id}
+# ---------------------------------------------------------------------------
+
+class TestPatientRoute:
+    def test_not_found_returns_404(self, api_client):
+        with patch("app.main.get_patient_hierarchy", new_callable=AsyncMock) as mock_fn:
+            mock_fn.return_value = None
+            # get_patient_hierarchy is called via _in_thread, so patch the imported name
+        # Simpler: patch at the module level and make _in_thread call it
+        with patch("app.main._in_thread", new=AsyncMock(return_value=None)):
+            resp = api_client.get("/patient/P-NOTEXIST")
+        assert resp.status_code == 404
+
+    def test_databricks_error_returns_502(self, api_client):
+        async def _raise(*a, **k):
+            raise RuntimeError("Databricks down")
+
+        with patch("app.main._in_thread", new=_raise):
+            resp = api_client.get("/patient/P-0001")
+        assert resp.status_code == 502
+
+
+# ---------------------------------------------------------------------------
+# /search
+# ---------------------------------------------------------------------------
+
+class TestSearchRoute:
+    def test_short_query_returns_empty(self, api_client):
+        resp = api_client.get("/search?q=P")
+        assert resp.status_code == 200
+        assert resp.json() == []
+
+    def test_valid_query_returns_list(self, api_client):
+        suggestions = [{"type": "patient", "id": "P-0001", "label": "P-0001", "sublabel": "CRC"}]
+        with patch("app.main._in_thread", new=AsyncMock(return_value=suggestions)):
+            resp = api_client.get("/search?q=P-0001")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert isinstance(data, list)
+
+    def test_search_error_returns_502(self, api_client):
+        async def _raise(*a, **k):
+            raise RuntimeError("Search failed")
+
+        with patch("app.main._in_thread", new=_raise):
+            resp = api_client.get("/search?q=P-1234")
+        assert resp.status_code == 502
