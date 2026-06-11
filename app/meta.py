@@ -9,7 +9,7 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from .constants import DEID_TABLE as _TABLE, INVENTORY_TABLE as _INVENTORY
+from .constants import DEID_TABLE as _TABLE, INVENTORY_TABLE as _INVENTORY, SUMMARY_TABLE as _SUMMARY
 
 logger = logging.getLogger(__name__)
 
@@ -335,3 +335,53 @@ def search_suggestions(query: str, warehouse_id: str) -> list[dict]:
         ]
 
     return []
+
+
+# ---------------------------------------------------------------------------
+# Slide summary (Phase 7)
+# ---------------------------------------------------------------------------
+
+def get_sample_slide_summary(
+    sample_ids: list[str],
+    warehouse_id: str,
+) -> list[dict]:
+    """
+    Return pre-computed slide availability stats for the given sample IDs.
+
+    Reads from the ``sample_wsi_summary`` Delta table, which is populated
+    nightly by the Databricks Asset Bundle job (``wsi-summary-pipeline``).
+
+    Each result dict has:
+      sample_id, patient_id, servable_slide_count, has_hne, has_ihc, stain_types
+
+    Samples not present in the summary table are silently omitted — the caller
+    (generate_wsi_clinical_attrs.py) fills in zero-count rows for them.
+    """
+    if not sample_ids:
+        return []
+
+    placeholders = ", ".join(f"'{sid.replace(chr(39), '')}'" for sid in sample_ids)
+    sql = f"""
+SELECT
+    sample_id,
+    patient_id,
+    servable_slide_count,
+    has_hne,
+    has_ihc,
+    stain_types
+FROM {_SUMMARY}
+WHERE sample_id IN ({placeholders})
+ORDER BY sample_id
+"""
+    rows = _run_query(sql, warehouse_id)
+    return [
+        {
+            "sample_id":            r.get("sample_id"),
+            "patient_id":           r.get("patient_id"),
+            "servable_slide_count": int(r.get("servable_slide_count") or 0),
+            "has_hne":              int(r.get("has_hne") or 0),
+            "has_ihc":              int(r.get("has_ihc") or 0),
+            "stain_types":          r.get("stain_types") or "",
+        }
+        for r in rows
+    ]

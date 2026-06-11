@@ -237,3 +237,145 @@ class TestGetSlidePath:
 
     def test_returns_none_when_path_is_null(self):
         assert self._call([{"path": None}]) is None
+
+
+# ---------------------------------------------------------------------------
+# get_sample_slide_summary
+# ---------------------------------------------------------------------------
+
+from app.meta import get_sample_slide_summary  # noqa: E402
+
+
+class TestGetSampleSlideSummary:
+    """Tests for get_sample_slide_summary — reads from sample_wsi_summary Delta table."""
+
+    def _call(self, sample_ids, rows):
+        with patch("app.meta._run_query", return_value=rows) as mock_rq:
+            result = get_sample_slide_summary(sample_ids, warehouse_id="wh-test")
+        return result, mock_rq
+
+    # ------------------------------------------------------------------
+    # Empty / edge-case inputs
+    # ------------------------------------------------------------------
+
+    def test_empty_sample_ids_returns_empty_without_query(self):
+        result, mock_rq = self._call([], rows=[])
+        assert result == []
+        mock_rq.assert_not_called()
+
+    def test_no_rows_returns_empty_list(self):
+        result, _ = self._call(["P-001-T01"], rows=[])
+        assert result == []
+
+    # ------------------------------------------------------------------
+    # Return-value structure
+    # ------------------------------------------------------------------
+
+    def _sample_row(
+        self,
+        sample_id="P-001-T01",
+        patient_id="P-001",
+        servable_slide_count=3,
+        has_hne=1,
+        has_ihc=0,
+        stain_types="H&E",
+    ):
+        return {
+            "sample_id":            sample_id,
+            "patient_id":           patient_id,
+            "servable_slide_count": servable_slide_count,
+            "has_hne":              has_hne,
+            "has_ihc":              has_ihc,
+            "stain_types":          stain_types,
+        }
+
+    def test_single_row_keys(self):
+        result, _ = self._call(["P-001-T01"], rows=[self._sample_row()])
+        assert len(result) == 1
+        row = result[0]
+        assert set(row.keys()) == {
+            "sample_id", "patient_id", "servable_slide_count",
+            "has_hne", "has_ihc", "stain_types",
+        }
+
+    def test_counts_are_ints(self):
+        result, _ = self._call(["P-001-T01"], rows=[self._sample_row(servable_slide_count="4")])
+        assert isinstance(result[0]["servable_slide_count"], int)
+        assert result[0]["servable_slide_count"] == 4
+
+    def test_has_hne_is_int(self):
+        result, _ = self._call(["P-001-T01"], rows=[self._sample_row(has_hne="1")])
+        assert result[0]["has_hne"] == 1
+
+    def test_has_ihc_is_int(self):
+        result, _ = self._call(["P-001-T01"], rows=[self._sample_row(has_ihc="1")])
+        assert result[0]["has_ihc"] == 1
+
+    def test_stain_types_none_becomes_empty_string(self):
+        result, _ = self._call(["P-001-T01"], rows=[self._sample_row(stain_types=None)])
+        assert result[0]["stain_types"] == ""
+
+    def test_stain_types_preserved(self):
+        result, _ = self._call(
+            ["P-001-T01"],
+            rows=[self._sample_row(stain_types="H&E;Ki-67;PD-L1")],
+        )
+        assert result[0]["stain_types"] == "H&E;Ki-67;PD-L1"
+
+    # ------------------------------------------------------------------
+    # Multiple rows
+    # ------------------------------------------------------------------
+
+    def test_multiple_rows_returned_in_order(self):
+        rows = [
+            self._sample_row(sample_id="P-001-T01", patient_id="P-001"),
+            self._sample_row(sample_id="P-002-T01", patient_id="P-002"),
+        ]
+        result, _ = self._call(["P-001-T01", "P-002-T01"], rows=rows)
+        assert [r["sample_id"] for r in result] == ["P-001-T01", "P-002-T01"]
+
+    # ------------------------------------------------------------------
+    # SQL generation
+    # ------------------------------------------------------------------
+
+    def test_sql_contains_sample_ids(self):
+        _, mock_rq = self._call(["P-001-T01", "P-002-T01"], rows=[])
+        sql_arg = mock_rq.call_args[0][0]
+        assert "P-001-T01" in sql_arg
+        assert "P-002-T01" in sql_arg
+
+    def test_sql_queries_summary_table(self):
+        from app.constants import SUMMARY_TABLE
+        _, mock_rq = self._call(["P-001-T01"], rows=[])
+        sql_arg = mock_rq.call_args[0][0]
+        assert SUMMARY_TABLE in sql_arg
+
+    def test_warehouse_id_forwarded_to_run_query(self):
+        _, mock_rq = self._call(["P-001-T01"], rows=[])
+        warehouse_arg = mock_rq.call_args[0][1]
+        assert warehouse_arg == "wh-test"
+
+    # ------------------------------------------------------------------
+    # Null / missing column values
+    # ------------------------------------------------------------------
+
+    def test_null_servable_count_becomes_zero(self):
+        result, _ = self._call(
+            ["P-001-T01"],
+            rows=[self._sample_row(servable_slide_count=None)],
+        )
+        assert result[0]["servable_slide_count"] == 0
+
+    def test_null_has_hne_becomes_zero(self):
+        result, _ = self._call(
+            ["P-001-T01"],
+            rows=[self._sample_row(has_hne=None)],
+        )
+        assert result[0]["has_hne"] == 0
+
+    def test_null_has_ihc_becomes_zero(self):
+        result, _ = self._call(
+            ["P-001-T01"],
+            rows=[self._sample_row(has_ihc=None)],
+        )
+        assert result[0]["has_ihc"] == 0

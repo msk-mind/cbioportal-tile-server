@@ -1,0 +1,50 @@
+bundle:
+  name: cbioportal-tile-server
+
+# Databricks Asset Bundle — manages the nightly WSI summary pipeline job.
+# Deploy:   databricks bundle deploy
+# Run once: databricks bundle run wsi-summary-pipeline
+# Destroy:  databricks bundle destroy
+
+targets:
+  dev:
+    mode: development
+    default: true
+    workspace:
+      host: https://msk-mode-prod.cloud.databricks.com
+
+  prod:
+    mode: production
+    workspace:
+      host: https://msk-mode-prod.cloud.databricks.com
+
+resources:
+  jobs:
+    wsi-summary-pipeline:
+      name: "[${bundle.target}] WSI Summary Pipeline"
+      description: >
+        Nightly job that computes per-sample WSI slide availability stats
+        (servable_slide_count, has_hne, has_ihc, stain_types) and writes them
+        to cdsi_prod.pathology_data_mining.sample_wsi_summary for use by
+        the cBioPortal tile server and study-import tooling.
+
+      schedule:
+        quartz_cron_expression: "0 0 3 * * ?"   # 03:00 UTC every day
+        timezone_id: UTC
+        pause_status: UNPAUSED
+
+      tasks:
+        - task_key: compute-wsi-summary
+          description: Run wsi_summary_pipeline.sql on serverless compute
+          sql_task:
+            warehouse_id: "0b49b7d78734ad5c"
+            file:
+              path: tools/wsi_summary_pipeline.sql
+              source: WORKSPACE
+
+      email_notifications:
+        on_failure:
+          - limr@mskcc.org
+
+      # Keep 7 run records for debugging
+      max_concurrent_runs: 1
