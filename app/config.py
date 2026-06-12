@@ -40,6 +40,7 @@ class Settings:
     wsi_auth_secret: str = field(default_factory=lambda: _env_str("WSI_AUTH_SECRET"))
     wsi_auth_audience: str = field(default_factory=lambda: _env_str("WSI_AUTH_AUDIENCE", "cbioportal-wsi"))
     wsi_auth_required: bool = field(default_factory=lambda: _env_bool("WSI_AUTH_REQUIRED", True))
+    wsi_study_mapping_table: str = field(default_factory=lambda: _env_str("WSI_STUDY_MAPPING_TABLE"))
 
     # S3 / Dell ECS connection
     aws_endpoint_url: str = field(default_factory=lambda: _env_str("AWS_ENDPOINT_URL", _aws_profile("endpoint_url", "")))
@@ -66,7 +67,7 @@ class Settings:
         default_factory=lambda: _env_bool("USE_CANONICAL_ASSOCIATION_TABLE", True)
     )
     allow_legacy_association_fallback: bool = field(
-        default_factory=lambda: _env_bool("ALLOW_LEGACY_ASSOCIATION_FALLBACK", False)
+        default_factory=lambda: _env_bool("ALLOW_LEGACY_ASSOCIATION_FALLBACK", True)
     )
 
     # Metadata cache
@@ -75,6 +76,17 @@ class Settings:
     # Block cache
     blockcache_path: str = field(default_factory=lambda: _env_str("BLOCKCACHE_PATH", ""))
     blockcache_block_size: int = field(default_factory=lambda: _env_int("BLOCKCACHE_BLOCK_SIZE", 8 * 1024 * 1024))
+
+    # Annotation API
+    annotation_database_url: str = field(default_factory=lambda: _env_str("ANNOTATION_DATABASE_URL"))
+    annotation_db_path: str = field(
+        default_factory=lambda: _env_str("ANNOTATION_DB_PATH", "/data/annotations.db")
+    )
+    keycloak_jwks_url: str = field(default_factory=lambda: _env_str("KEYCLOAK_JWKS_URL"))
+    annotation_auth_enabled: bool = field(
+        default_factory=lambda: _env_bool("ANNOTATION_AUTH_ENABLED", True)
+    )
+    oncokb_api_token: str = field(default_factory=lambda: _env_str("ONCOKB_API_TOKEN"))
 
     # CORS
     cors_origins: list[str] = field(
