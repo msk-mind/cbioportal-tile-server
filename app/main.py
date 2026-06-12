@@ -12,6 +12,7 @@ CDN or nginx proxy_cache can absorb the bulk of repeat requests.
 """
 
 import asyncio
+import json
 import logging
 from contextlib import asynccontextmanager
 
@@ -79,8 +80,10 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-TILE_CACHE_HEADERS = {"Cache-Control": "public, max-age=604800, immutable"}  # 7 days
+TILE_CACHE_HEADERS  = {"Cache-Control": "public, max-age=604800, immutable"}  # 7 days — immutable image data
 THUMB_CACHE_HEADERS = {"Cache-Control": "public, max-age=86400"}
+# Patient/sample metadata contains PHI — must not be cached by shared/public proxies
+PHI_CACHE_HEADERS   = {"Cache-Control": "private, no-store"}
 
 
 async def _in_thread(fn, *args):
@@ -140,7 +143,8 @@ async def patient_hierarchy(patient_id: str):
     """
     cached = await tile_cache.get_patient(patient_id)
     if cached is not None:
-        return cached
+        return Response(content=json.dumps(cached), media_type="application/json",
+                        headers=PHI_CACHE_HEADERS)
 
     try:
         result = await _in_thread(
@@ -159,7 +163,8 @@ async def patient_hierarchy(patient_id: str):
         )
 
     await tile_cache.set_patient(patient_id, result)
-    return result
+    return Response(content=json.dumps(result), media_type="application/json",
+                    headers=PHI_CACHE_HEADERS)
 
 
 @app.get("/slides/{image_id}/dbmeta")
@@ -177,7 +182,8 @@ async def slide_dbmeta(image_id: str):
 
     if result is None:
         raise HTTPException(status_code=404, detail="Slide not found")
-    return result
+    return Response(content=json.dumps(result, default=str),
+                    media_type="application/json", headers=PHI_CACHE_HEADERS)
 
 
 @app.get("/search")
@@ -196,7 +202,8 @@ async def search(q: str = ""):
     cache_key = f"search:{q.lower()}"
     cached = await tile_cache.get_raw(cache_key)
     if cached is not None:
-        return cached
+        return Response(content=json.dumps(cached, default=str),
+                        media_type="application/json", headers=PHI_CACHE_HEADERS)
 
     try:
         results = await _in_thread(
@@ -209,7 +216,8 @@ async def search(q: str = ""):
         raise HTTPException(status_code=502, detail="Search query failed")
 
     await tile_cache.set_raw(cache_key, results, ttl=300)
-    return results
+    return Response(content=json.dumps(results, default=str),
+                    media_type="application/json", headers=PHI_CACHE_HEADERS)
 
 
 @app.get("/tiles/{slide_id}/metadata")

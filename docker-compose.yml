@@ -28,7 +28,7 @@ services:
       JPEG_QUALITY: ${JPEG_QUALITY:-85}
 
       # ── Redis cache ───────────────────────────────────────────────────────
-      REDIS_URL: redis://redis:6379
+      REDIS_URL: redis://:${REDIS_PASSWORD:-}@redis:6379
       TILE_CACHE_TTL: 0        # 0 = no expiry (tiles are immutable)
       PATIENT_CACHE_TTL: ${PATIENT_CACHE_TTL:-300}   # 5 min for dev; 86400 in prod
 
@@ -67,11 +67,12 @@ services:
       --maxmemory-policy allkeys-lru
       --save ""
       --appendonly no
+      --requirepass ${REDIS_PASSWORD:-}
     restart: unless-stopped
     volumes:
       - redis_data:/data
     healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
+      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD:-}", "ping"]
       interval: 10s
       timeout: 3s
       retries: 3
