@@ -505,6 +505,105 @@ def get_patient_hierarchy(patient_id: str, warehouse_id: str) -> dict | None:
         hierarchy["reference_sequencing_date"],
     ) = _assemble_slide_associations(association_rows)
     return hierarchy
+    # The legacy inline hierarchy builder below is retained for compatibility
+    # with the historical patch sequence but is unreachable after canonical
+    # hierarchy assembly above.
+
+    samples: dict[str, dict] = {}
+
+    for r in rows:
+        sid   = r.get("SAMPLE_ID_IMPACT") or ""
+        pnum  = r.get("PART_NUMBER")
+        bnum  = str(r.get("BLOCK_NUMBER") or "")
+        pkey  = str(pnum) if pnum is not None else "?"
+        slide_url = r.get("slide_path") or ""
+        can_serve = slide_url.startswith("s3://")
+
+        if sid not in samples:
+            samples[sid] = {
+                "sample_id":               sid,
+                "cancer_type":             r.get("CANCER_TYPE"),
+                "cancer_type_detailed":    r.get("CANCER_TYPE_DETAILED"),
+                "oncotree_code":           r.get("ONCOTREE_CODE"),
+                "primary_site":            r.get("PRIMARY_SITE"),
+                "sample_type":             r.get("SAMPLE_TYPE"),
+                "metastatic_site":         r.get("METASTATIC_SITE"),
+                "tumor_purity":            _coerce(r.get("TUMOR_PURITY")),
+                "oncogenic_mutations":     r.get("ONCOGENIC_MUTATIONS"),
+                "num_oncogenic_mutations": _coerce(r.get("NUM_ONCOGENIC_MUTATIONS")),
+                "tmb_score":               _coerce(r.get("CVR_TMB_SCORE")),
+                "msi_type":                r.get("MSI_TYPE"),
+                "parts": {},
+            }
+
+        s = samples[sid]
+
+        if pkey not in s["parts"]:
+            s["parts"][pkey] = {
+                "part_number":      pnum,
+                "part_designator":  r.get("part_designator"),
+                "part_type":        r.get("part_type"),
+                "part_description": r.get("part_description"),
+                "subspecialty":     r.get("subspecialty"),
+                "path_dx_title":    r.get("PATH_DX_SPEC_TITLE"),
+                "blocks": {},
+            }
+
+        p = s["parts"][pkey]
+
+        if bnum not in p["blocks"]:
+            p["blocks"][bnum] = {
+                "block_number": bnum,
+                "block_label":  r.get("BLOCK_LABEL"),
+                "slides": [],
+            }
+
+        p["blocks"][bnum]["slides"].append({
+            "image_id":        str(r.get("image_id")),
+            "stain_name":      r.get("stain_name"),
+            "stain_group":     r.get("stain_group"),
+            "is_hne":          str(r.get("IS_HNE","0")) == "1",
+            "is_ihc":          str(r.get("IS_IHC","0")) == "1",
+            "magnification":   r.get("magnification"),
+            "file_size_bytes": _coerce(r.get("file_size_bytes")),
+            "can_serve_tiles": can_serve,
+            "barcode":         r.get("barcode"),
+            "block_label":     r.get("BLOCK_LABEL"),
+            "block_number":    r.get("BLOCK_NUMBER"),
+            # Part-level anatomical context propagated to slide for frontend display
+            "part_description": r.get("part_description"),
+        })
+
+    # Clinical sort order for stain groups
+    _STAIN_ORDER = {
+        "h&e (initial)": 0,
+        "h&e (other)":   1,
+        "ihc":           2,
+    }
+
+    def _slide_sort_key(sl: dict) -> tuple:
+        group = (sl.get("stain_group") or "").lower()
+        order = _STAIN_ORDER.get(group, 3)
+        return (order, (sl.get("stain_name") or "").lower())
+
+    result: list[dict] = []
+    for s in samples.values():
+        parts_list = []
+        for p in s["parts"].values():
+            blocks_list = []
+            for b in p["blocks"].values():
+                b["slides"].sort(key=_slide_sort_key)
+                blocks_list.append(b)
+            # Also sort blocks so real blocks (with label) come after unblocked slides
+            blocks_list.sort(key=lambda b: (0 if not (b.get("block_label") or "").strip() else 1))
+            p_out = {k: v for k, v in p.items() if k != "blocks"}
+            p_out["blocks"] = blocks_list
+            parts_list.append(p_out)
+        s_out = {k: v for k, v in s.items() if k != "parts"}
+        s_out["parts"] = parts_list
+        result.append(s_out)
+
+    return {"patient_id": patient_id, "samples": result}
 
 
 def get_slide_dbmeta(image_id: str, warehouse_id: str) -> dict | None:
