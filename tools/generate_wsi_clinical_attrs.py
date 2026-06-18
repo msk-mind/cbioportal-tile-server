@@ -8,12 +8,11 @@ Databricks Asset Bundle job) and produces two files for cBioPortal study import:
   meta_clinical_sample_wsi.txt
   data_clinical_sample_wsi.txt
 
-These files add five filterable Study View attributes per sample:
-  HAS_WSI_SLIDE    — Yes / No (priority 0 = hidden by default; useful for multi-study views)
-  WSI_SLIDE_COUNT  — integer count (bar chart)
-  WSI_HNE_SLIDE    — Yes / No (pie chart)
-  WSI_IHC_SLIDE    — Yes / No (pie chart)
-  WSI_MMR_IHC_SLIDE — Yes / No — has MLH1/MSH2/MSH6/PMS2 IHC (pie chart)
+These files add four filterable Study View attributes per sample:
+  HAS_WSI_SLIDE   — Yes / No (priority 0 = hidden by default; useful for multi-study views)
+  WSI_SLIDE_COUNT — integer count (bar chart)
+  WSI_HNE_SLIDE   — Yes / No (pie chart)
+  WSI_IHC_SLIDE   — Yes / No (pie chart)
 
 Usage:
   python tools/generate_wsi_clinical_attrs.py \\
@@ -49,14 +48,11 @@ from app.meta import get_sample_slide_summary                         # noqa: E4
 _ATTRIBUTES = [
     # (column_id, display_name, description, datatype, priority)
     # priority=0 hides from default chart view but keeps the attr filterable.
-    ("HAS_WSI_SLIDE",    "Has WSI Slide",        "Any servable WSI tile",            "STRING", "0"),
-    ("WSI_SLIDE_COUNT",  "WSI Slide Count",      "Servable slide count",             "NUMBER", "1"),
-    ("WSI_HNE_SLIDE",    "Has H&E Slide",        "H&E slide available",              "STRING", "1"),
-    ("WSI_IHC_SLIDE",    "Has IHC Slide",        "IHC slide available",              "STRING", "1"),
-    ("WSI_MMR_IHC_SLIDE","Has MMR IHC",          "MLH1/MSH2/MSH6/PMS2 IHC available","STRING", "1"),
+    ("HAS_WSI_SLIDE",   "Has WSI Slide",   "Any servable WSI tile",   "STRING", "0"),
+    ("WSI_SLIDE_COUNT", "WSI Slide Count", "Servable slide count",    "NUMBER", "1"),
+    ("WSI_HNE_SLIDE",   "Has H&E Slide",   "H&E slide available",     "STRING", "1"),
+    ("WSI_IHC_SLIDE",   "Has IHC Slide",   "IHC slide available",     "STRING", "1"),
 ]
-
-_MMR_MARKERS = frozenset(["MLH1", "MSH2", "MSH6", "PMS2"])
 
 _META_TEMPLATE = """\
 cancer_study_identifier: {study_id}
@@ -131,12 +127,6 @@ def _write_data(study_dir: Path, rows: list[dict]) -> None:
             has_slide = "Yes" if count > 0 else "No"
             has_hne   = "Yes" if str(row.get("has_hne") or "0") == "1" else "No"
             has_ihc   = "Yes" if str(row.get("has_ihc") or "0") == "1" else "No"
-            stain_tokens = {
-                t.strip().upper()
-                for t in (row.get("stain_types") or "").split(";")
-                if t.strip()
-            }
-            has_mmr = "Yes" if stain_tokens & _MMR_MARKERS else "No"
             writer.writerow([
                 row["patient_id"],
                 row["sample_id"],
@@ -144,7 +134,6 @@ def _write_data(study_dir: Path, rows: list[dict]) -> None:
                 str(count),
                 has_hne,
                 has_ihc,
-                has_mmr,
             ])
 
     print(f"  Wrote {path}  ({len(rows)} rows)")
