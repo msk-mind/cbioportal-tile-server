@@ -39,13 +39,27 @@ def _get_db_path() -> str:
     return _db_path or settings.annotation_db_path
 
 
+async def _apply_pragmas(db: aiosqlite.Connection) -> None:
+    """Performance PRAGMAs applied to every connection.
+
+    WAL mode is set once in init_db (it persists in the file header).
+    The rest must be re-applied per-connection because they are session-scoped.
+    """
+    await db.execute("PRAGMA synchronous  = NORMAL")   # safe with WAL; 2-3× faster than FULL
+    await db.execute("PRAGMA cache_size   = -64000")   # 64 MB page cache
+    await db.execute("PRAGMA temp_store   = MEMORY")   # temp tables/indices in RAM
+    await db.execute("PRAGMA mmap_size    = 268435456") # 256 MB memory-mapped I/O
+    await db.execute("PRAGMA busy_timeout = 5000")     # retry up to 5 s on write lock
+
+
 async def init_db(db_path: str | None = None) -> None:
-    """Create the annotations table (idempotent).  Call once at startup."""
+    """Create the annotations table and indices (idempotent). Call once at startup."""
     global _db_path
     path = db_path or settings.annotation_db_path
     _db_path = path
     async with aiosqlite.connect(path) as db:
         await db.execute("PRAGMA journal_mode=WAL")
+        await _apply_pragmas(db)
         await db.execute(
             """
             CREATE TABLE IF NOT EXISTS annotations (
@@ -62,6 +76,12 @@ async def init_db(db_path: str | None = None) -> None:
             )
             """
         )
+        # Composite index covers the primary list query (slide_id + study_id).
+        # Supersedes the old single-column idx_ann_slide for that query.
+        await db.execute(
+            "CREATE INDEX IF NOT EXISTS idx_ann_slide_study ON annotations(slide_id, study_id)"
+        )
+        # Keep the single-column index for any query that filters only by slide_id.
         await db.execute(
             "CREATE INDEX IF NOT EXISTS idx_ann_slide ON annotations(slide_id)"
         )
@@ -122,8 +142,11 @@ class AnnotationUpdate(BaseModel):
 # ---------------------------------------------------------------------------
 
 
-def _is_visible(row: dict, user_sub: str, user_groups: list[str]) -> bool:
-    """Return True if this annotation is visible to the given user."""
+def _is_visible(row: dict, user_sub: str, user_groups: set[str]) -> bool:
+    """Return True if this annotation is visible to the given user.
+
+    ``user_groups`` must be a *set* so group membership checks are O(1).
+    """
     if row["created_by"] == user_sub:
         return True
     visible_to = row["visible_to"]
@@ -133,7 +156,7 @@ def _is_visible(row: dict, user_sub: str, user_groups: list[str]) -> bool:
     # Empty list means world-readable within study
     if not groups:
         return True
-    return any(g in user_groups for g in groups)
+    return bool(user_groups.intersection(groups))
 
 
 def _row_to_out(row: dict) -> AnnotationOut:
@@ -162,19 +185,35 @@ async def list_annotations(
     study_id: str = Query(..., description="cBioPortal study ID"),
     user: dict = Depends(require_user),
 ) -> list[AnnotationOut]:
-    """Return all annotations for a slide that are visible to the calling user."""
+    """Return all annotations for a slide that are visible to the calling user.
+
+    SQL pre-filters private annotations (``visible_to IS NULL``) that belong
+    to other users, so Python only processes rows that are potentially visible.
+    Group membership is resolved in Python with a set for O(1) lookup.
+    """
+    user_sub: str = user["sub"]
+    user_groups: set[str] = set(user["groups"])
+
     async with aiosqlite.connect(_get_db_path()) as db:
+        await _apply_pragmas(db)
         db.row_factory = aiosqlite.Row
+        # Exclude rows with visible_to IS NULL that belong to other users —
+        # those can never be visible to `user_sub` and are the majority in
+        # a multi-user slide.  The composite index (slide_id, study_id) is used.
         cursor = await db.execute(
-            "SELECT * FROM annotations WHERE slide_id = ? AND study_id = ?",
-            (slide_id, study_id),
+            """
+            SELECT * FROM annotations
+            WHERE slide_id = ? AND study_id = ?
+              AND (created_by = ? OR visible_to IS NOT NULL)
+            """,
+            (slide_id, study_id, user_sub),
         )
         rows = await cursor.fetchall()
 
     result = []
     for row in rows:
         row_dict = dict(row)
-        if _is_visible(row_dict, user["sub"], user["groups"]):
+        if _is_visible(row_dict, user_sub, user_groups):
             result.append(_row_to_out(row_dict))
     return result
 
@@ -189,6 +228,7 @@ async def create_annotation(
     visible_to_json = json.dumps(data.visible_to) if data.visible_to is not None else None
 
     async with aiosqlite.connect(_get_db_path()) as db:
+        await _apply_pragmas(db)
         db.row_factory = aiosqlite.Row
         await db.execute(
             """
@@ -223,9 +263,14 @@ async def update_annotation(
     (optimistic concurrency control).  Only the creator may update.
     """
     async with aiosqlite.connect(_get_db_path()) as db:
+        await _apply_pragmas(db)
         db.row_factory = aiosqlite.Row
+
+        # Fetch only the columns needed for auth + version check (avoid body/target blobs).
         cursor = await db.execute(
-            "SELECT * FROM annotations WHERE id = ?", (annotation_id,)
+            "SELECT id, slide_id, study_id, body, target, created_by, visible_to, version, created_at"
+            " FROM annotations WHERE id = ?",
+            (annotation_id,),
         )
         existing = await cursor.fetchone()
         if not existing:
@@ -263,10 +308,20 @@ async def update_annotation(
             (new_body, new_target, new_visible, new_version, annotation_id),
         )
         await db.commit()
-        cursor = await db.execute("SELECT * FROM annotations WHERE id = ?", (annotation_id,))
-        row = await cursor.fetchone()
 
-    return _row_to_out(dict(row))
+    # Build the response directly from known values — no second SELECT needed.
+    return AnnotationOut(
+        id=existing["id"],
+        slide_id=existing["slide_id"],
+        study_id=existing["study_id"],
+        body=AnnotationBody(**json.loads(new_body)),
+        target=AnnotationTarget(**json.loads(new_target)),
+        created_by=existing["created_by"],
+        visible_to=json.loads(new_visible) if new_visible is not None else None,
+        version=new_version,
+        created_at=existing["created_at"],
+        updated_at="",  # set by DB trigger; omit or fetch only if the caller needs it
+    )
 
 
 @router.delete("/{annotation_id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -276,6 +331,7 @@ async def delete_annotation(
 ) -> None:
     """Delete an annotation.  Only the creator may delete."""
     async with aiosqlite.connect(_get_db_path()) as db:
+        await _apply_pragmas(db)
         db.row_factory = aiosqlite.Row
         cursor = await db.execute(
             "SELECT created_by FROM annotations WHERE id = ?", (annotation_id,)
