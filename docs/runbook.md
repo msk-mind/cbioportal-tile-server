@@ -89,7 +89,30 @@ The tool:
 - Queries Databricks (`slide_inventory` JOIN) to find patients with servable slides
 - Writes `data_resource_patient.txt`, `meta_resource_patient.txt`, `data_resource_definition.txt`, `meta_resource_definition.txt`
 
-After running, open a PR in the `private` repo and reload the study in cBioPortal.
+**Step 2 — Generate WSI Study View filter attributes:**
+
+```bash
+python tools/generate_wsi_clinical_attrs.py \
+    --study-dir /path/to/private/automation_tool_datasets/<study_id>
+```
+
+This reads `sample_wsi_summary` in Databricks (populated nightly by the `wsi-summary-pipeline` bundle job) and writes two files that add five filterable attributes to the Study View summary tab:
+
+| Attribute | Type | Description |
+|---|---|---|
+| `HAS_WSI_SLIDE` | BINARY | Any servable WSI tile (Yes/No) |
+| `WSI_SLIDE_COUNT` | NUMBER | Total servable slide count |
+| `WSI_HNE_SLIDE` | BINARY | H&E slide available (Yes/No) |
+| `WSI_IHC_SLIDE` | BINARY | IHC slide available (Yes/No) |
+| `WSI_STAIN_TYPES` | STRING | Semicolon-separated stain names |
+
+If the `sample_wsi_summary` table doesn't exist yet (first run), seed it first:
+```bash
+databricks bundle deploy --profile DEFAULT
+databricks bundle run wsi-summary-pipeline --profile DEFAULT
+```
+
+After running both tools, open a PR in the `private` repo and reload the study in cBioPortal.
 
 **Batch migration** (all MSK studies):
 ```bash
