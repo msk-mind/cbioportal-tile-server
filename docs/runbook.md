@@ -39,6 +39,23 @@ It routes the `/wsi` prefix to the Kubernetes `slide-viewer` Service on port
 timeouts, buffering disabled, a 1 MiB request limit, 100 requests/second per
 source limit with burst multiplier 5, and 50 concurrent connections per
 source.
+1. **Kubernetes secret** — must exist before ArgoCD first sync:
+   ```bash
+   kubectl create secret generic slide-viewer-secrets \
+     --from-literal=REEF_AWS_KEY=<ecs-access-key> \
+     --from-literal=REEF_AWS_SECRET=<ecs-secret-key> \
+     --from-literal=DATABRICKS_HOST=https://msk-mode-prod.cloud.databricks.com \
+     --from-literal=DATABRICKS_TOKEN=<pat> \
+     --from-literal=ANNOTATION_DATABASE_URL=postgresql://<user>:<password>@<host>:5432/cbioportal_annotations?sslmode=require
+   ```
+
+   The current dev Lakebase endpoint for annotation storage is:
+   - host: `ep-proud-hat-d23z7mxx.database.us-east-1.cloud.databricks.com`
+   - database: `cbioportal_annotations`
+   - login role: `cbioportal_api`
+
+2. **GitHub Actions secret** — for GitOps image-tag pinning:
+   - `K8S_DEPLOY_TOKEN`: PAT with `repo` write access to `msk-mind/knowledgesystems-k8s-deployment`
 
 There is no checked-in `slides.cbioportal.org` DNS record or ingress rule.
 Do not create or document that CNAME unless the infrastructure/DNS owner
@@ -147,6 +164,12 @@ environment before treating it as production-equivalent.
 ## Health and smoke checks
 
 Local health checks:
+Annotation auth settings also live in the slide-viewer `configmap.yaml`:
+```yaml
+KEYCLOAK_JWKS_URL: "https://keycloak.cbioportal.mskcc.org/auth/realms/msk/protocol/openid-connect/certs"
+ANNOTATION_AUTH_ENABLED: "true"
+```
+
 ---
 
 ## CI/CD
@@ -208,6 +231,45 @@ The nightly Databricks Asset Bundle is defined in `databricks.yml` and runs:
 2. `tools/wsi_summary_pipeline.sql`
 
 Preview migrations before writing:
+### 404 on tile endpoint
+- Slide may not have a `slide_inventory` row for the given `image_id`.
+- Verify: query `cdsi_eng_phi.pdm_base_tables.slide_inventory WHERE image_id = '<id>'` in Databricks.
+- The ECS bucket key may have moved — check `slide_inventory.path`.
+
+### Redis OOM
+- Default `maxmemory=8gb` with `allkeys-lru` — Redis will evict old tiles automatically.
+- If eviction rate is very high, consider increasing `SLIDE_VIEWER_REDIS_MAXMEMORY` in `redis.yaml`.
+
+### Ingress rate-limit (HTTP 429)
+- A single viewer loading a large WSI can briefly exceed 100 req/s.
+- Increase `limit-rps` in `ingress.yaml` or whitelist the origin in nginx config.
+
+---
+
+## Secrets Rotation
+
+### ECS credentials
+```bash
+kubectl create secret generic slide-viewer-secrets \
+  --from-literal=REEF_AWS_KEY=<new-key> \
+  --from-literal=REEF_AWS_SECRET=<new-secret> \
+  --from-literal=DATABRICKS_HOST=https://msk-mode-prod.cloud.databricks.com \
+  --from-literal=DATABRICKS_TOKEN=<pat> \
+  --from-literal=ANNOTATION_DATABASE_URL=postgresql://<user>:<password>@<host>:5432/cbioportal_annotations?sslmode=require \
+  --dry-run=client -o yaml | kubectl apply -f -
+kubectl rollout restart deployment/slide-viewer
+```
+
+### Databricks PAT
+1. Generate a new PAT in Databricks UI (Settings → Developer → Access Tokens).
+2. Update the secret as above with the new `DATABRICKS_TOKEN`.
+3. Restart the deployment.
+
+---
+
+## Rollback
+
+ArgoCD allows instant rollback to any prior synced revision:
 
 ```bash
 bash tools/migrate_all_studies.sh --dry-run
