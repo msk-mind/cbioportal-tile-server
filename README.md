@@ -78,3 +78,9 @@ only; requests must continue to work if the cache is unavailable.
 ```bash
 uv run pytest
 ```
+
+## Databricks bundles
+
+- Root [databricks.yml](databricks.yml) manages the nightly WSI summary pipeline job.
+- [databricks/lakebase/README.md](databricks/lakebase/README.md) documents the
+  separate Lakebase bundle used to provision annotation storage.
