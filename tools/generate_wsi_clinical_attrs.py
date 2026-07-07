@@ -40,7 +40,7 @@ from pathlib import Path
 # Allow importing from the app package when running from the repo root.
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from app.constants import DEFAULT_WAREHOUSE_ID as _DEFAULT_WAREHOUSE  # noqa: E402
-from app.meta import get_sample_slide_summary                         # noqa: E402
+from app.meta import get_sample_slide_summary  # noqa: E402
 
 # ---------------------------------------------------------------------------
 # cBioPortal file format constants
@@ -176,7 +176,6 @@ def main(argv: list[str] | None = None) -> None:
     print(f"Samples:   {len(sample_ids)}")
     print(f"Warehouse: {args.warehouse_id}")
     print("Querying sample_wsi_summary…")
-
     summary_rows = get_sample_slide_summary(sample_ids, args.warehouse_id)
 
     # Build a lookup keyed by sample_id so we can emit a row for every sample
