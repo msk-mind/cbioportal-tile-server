@@ -95,7 +95,6 @@ async def require_wsi_capability(request: Request, call_next):
         return await call_next(request)
     if not settings.wsi_auth_required:
         return await call_next(request)
-
     authorization = request.headers.get("authorization", "")
     if not authorization.startswith("Bearer "):
         return Response(status_code=401, headers={"WWW-Authenticate": "Bearer"})
