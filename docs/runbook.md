@@ -53,9 +53,9 @@ argocd app get slide-viewer
 
 ### CORS
 
-Edit `configmap.yaml` and add the MSK internal cBioPortal hostname to `CORS_ORIGINS`:
+Set `CORS_ORIGINS` to the internal MSK cBioPortal hosts that embed the viewer:
 ```yaml
-CORS_ORIGINS: "https://cbioportal.org,https://www.cbioportal.org,https://genie.cbioportal.org,https://cbioportal.mskcc.org"
+CORS_ORIGINS: "https://cbioportal.mskcc.org,https://triage.cbioportal.mskcc.org"
 ```
 
 ---

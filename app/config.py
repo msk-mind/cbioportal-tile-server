@@ -78,7 +78,7 @@ class Settings:
     cors_origins: list[str] = field(
         default_factory=lambda: _env_csv(
             "CORS_ORIGINS",
-            "https://cbioportal.org,https://www.cbioportal.org,https://genie.cbioportal.org",
+            "https://cbioportal.mskcc.org,https://triage.cbioportal.mskcc.org",
         )
     )
 

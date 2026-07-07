@@ -37,7 +37,7 @@ All settings are environment variables (see `app/config.py`):
 | `REDIS_URL` | `redis://redis:6379` | Redis connection |
 | `MAX_OPEN_SLIDES` | `256` | LRU slide cache capacity |
 | `BLOCKCACHE_PATH` | — | NVMe block cache directory |
-| `CORS_ORIGINS` | public cBioPortal origins | Comma-separated allowed origins |
+| `CORS_ORIGINS` | internal MSK cBioPortal origins | Comma-separated allowed origins |
 
 ## Running tests
 
