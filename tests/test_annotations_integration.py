@@ -210,14 +210,20 @@ class TestAnnotationCRUD:
 
     async def test_created_by_matches_keycloak_sub(self, client, tokens):
         import base64, json as _json
-        sub = _json.loads(base64.b64decode(tokens["editor1"].split(".")[1] + "==="))["sub"]
+        payload = _json.loads(base64.b64decode(tokens["editor1"].split(".")[1] + "==="))
+        sub = payload["sub"]
+        preferred_username = payload["preferred_username"]
+        name = payload["name"]
 
         resp = await client.post(
             "/annotations",
             json=_ann_payload(visible_to=[]),
             headers=_auth(tokens["editor1"]),
         )
-        assert resp.json()["created_by"] == sub
+        data = resp.json()
+        assert data["created_by"] == sub
+        assert data["created_by_username"] == preferred_username
+        assert data["created_by_name"] == name
 
     async def test_list_returns_own_annotation(self, client, tokens):
         await client.post(

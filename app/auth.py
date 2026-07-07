@@ -33,9 +33,53 @@ _jwks_fetched_at: float = 0.0
 _JWKS_TTL = 3600  # re-fetch public keys every hour
 
 
+def _jwks_cache_fresh() -> bool:
+    return bool(_jwks_cache) and (time.monotonic() - _jwks_fetched_at) < _JWKS_TTL
+
+
+def _dev_user() -> dict[str, Any]:
+    return {
+        "sub": "dev-user",
+        "groups": [],
+        "preferred_username": "dev-user",
+        "name": "Dev User",
+    }
+
+
+def _missing_auth_error() -> HTTPException:
+    return HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail="Missing Authorization header",
+        headers={"WWW-Authenticate": "Bearer"},
+    )
+
+
+def _invalid_token_error(exc: JWTError) -> HTTPException:
+    return HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail=f"Invalid token: {exc}",
+        headers={"WWW-Authenticate": "Bearer"},
+    )
+
+
+def _normalize_user(payload: dict[str, Any]) -> dict[str, Any]:
+    sub: str = payload.get("sub", "")
+    if not sub:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Token missing 'sub' claim",
+        )
+    return {
+        "sub": sub,
+        "groups": payload.get("groups", []),
+        "preferred_username": payload.get("preferred_username") or payload.get("email") or sub,
+        "name": payload.get("name") or payload.get("preferred_username") or sub,
+    }
+
+
 async def _get_jwks() -> dict[str, Any]:
     global _jwks_cache, _jwks_fetched_at
-    if time.monotonic() - _jwks_fetched_at < _JWKS_TTL and _jwks_cache:
+    if _jwks_cache_fresh():
         return _jwks_cache
     if not settings.keycloak_jwks_url:
         raise HTTPException(
@@ -82,14 +126,18 @@ def _get_cached_payload(token: str) -> dict[str, Any] | None:
     return None
 
 
+def _prune_token_cache() -> None:
+    cutoff = time.monotonic() - _TOKEN_CACHE_TTL
+    stale = [k for k, (_, t) in _token_cache.items() if t < cutoff]
+    for k in stale:
+        _token_cache.pop(k, None)
+
+
 def _set_cached_payload(token: str, payload: dict[str, Any]) -> None:
     _token_cache[token] = (payload, time.monotonic())
     # Evict stale entries when the cache grows large (simple LRU-free eviction).
     if len(_token_cache) > 4096:
-        cutoff = time.monotonic() - _TOKEN_CACHE_TTL
-        stale = [k for k, (_, t) in _token_cache.items() if t < cutoff]
-        for k in stale:
-            _token_cache.pop(k, None)
+        _prune_token_cache()
 
 
 # ---------------------------------------------------------------------------
@@ -101,8 +149,8 @@ async def require_user(
     creds: HTTPAuthorizationCredentials | None = Depends(_bearer),
 ) -> dict[str, Any]:
     """
-    FastAPI dependency.  Returns ``{"sub": str, "groups": list[str]}`` from a
-    valid Keycloak Bearer JWT.
+    FastAPI dependency. Returns the stable subject plus human-readable
+    Keycloak identity fields from a valid Bearer JWT.
 
     When ``ANNOTATION_AUTH_ENABLED=false``, skips validation and returns a
     synthetic dev identity so the API works without a real Keycloak setup.
@@ -111,14 +159,10 @@ async def require_user(
     repeated RSA signature verification on every request from the same client.
     """
     if not settings.annotation_auth_enabled:
-        return {"sub": "dev-user", "groups": []}
+        return _dev_user()
 
     if creds is None:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Missing Authorization header",
-            headers={"WWW-Authenticate": "Bearer"},
-        )
+        raise _missing_auth_error()
 
     token = creds.credentials
 
@@ -136,19 +180,8 @@ async def require_user(
             options={"verify_aud": False},
         )
     except JWTError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail=f"Invalid token: {exc}",
-            headers={"WWW-Authenticate": "Bearer"},
-        )
+        raise _invalid_token_error(exc)
 
-    sub: str = payload.get("sub", "")
-    if not sub:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Token missing 'sub' claim",
-        )
-
-    result = {"sub": sub, "groups": payload.get("groups", [])}
+    result = _normalize_user(payload)
     _set_cached_payload(token, result)
     return result

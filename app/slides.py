@@ -12,17 +12,15 @@ this turns the p95 ~160 ms ECS latency into <1 ms NVMe reads.
 """
 
 import logging
-import os
-import shutil
 import threading
 from collections import OrderedDict
-from dataclasses import dataclass
-from typing import Any
 
-import fsspec
 from tiffslide import TiffSlide
 
 from .config import settings
+from .slide_store import SlideEntry as _Entry
+from .slide_store import close_entry as _close_entry
+from .slide_store import open_slide as _open_slide
 
 log = logging.getLogger(__name__)
 
@@ -40,11 +38,7 @@ def _resolve_s3_location(slide_id: str) -> tuple[str, str, dict]:
     bucket, _, key = without_scheme.partition("/")
     if not bucket or not key:
         raise FileNotFoundError(f"Malformed slide URI: {slide_id!r}")
-    return bucket, key, _s3_opts()
 
-
-def _s3_opts() -> dict:
-    """fsspec/s3fs options built from canonical AWS env vars."""
     opts: dict = {}
     if settings.aws_endpoint_url:
         opts["endpoint_url"] = settings.aws_endpoint_url
@@ -52,65 +46,7 @@ def _s3_opts() -> dict:
         opts["key"] = settings.aws_access_key_id
     if settings.aws_secret_access_key:
         opts["secret"] = settings.aws_secret_access_key
-    return opts
-
-
-def _open_slide(slide_id: str) -> tuple[TiffSlide, Any]:
-    """
-    Open a TiffSlide and return (slide, fileobj).
-
-    Supports three slide_id forms — see _resolve_s3_location() for details.
-    fileobj is the fsspec file handle kept alive alongside the slide.
-    When BlockCache is not configured, fileobj is None.
-    """
-    bucket, key, s3_opts = _resolve_s3_location(slide_id)
-
-    if settings.blockcache_path:
-        # One cache subdirectory per slide keeps namespace clean.
-        safe_id = slide_id.replace("/", "_").replace(":", "_").lstrip("_")
-        cache_dir = os.path.join(settings.blockcache_path, safe_id)
-        os.makedirs(cache_dir, exist_ok=True)
-
-        def _open_with_cache(cache_dir: str) -> tuple[TiffSlide, Any]:
-            fs = fsspec.filesystem(
-                "blockcache",
-                target_protocol="s3",
-                target_options=s3_opts,
-                cache_storage=cache_dir,
-                block_size=settings.blockcache_block_size,
-            )
-            fileobj = fs.open(f"{bucket}/{key}", "rb")
-            return TiffSlide(fileobj), fileobj
-
-        slide, fileobj = _open_with_cache(cache_dir)
-
-        if slide.level_count < 2:
-            log.warning(
-                "slide %s opened with level_count=%d — stale blockcache suspected; "
-                "clearing cache dir and retrying",
-                slide_id, slide.level_count,
-            )
-            try:
-                fileobj.close()
-                slide.close()
-            except Exception:
-                pass
-            shutil.rmtree(cache_dir, ignore_errors=True)
-            os.makedirs(cache_dir, exist_ok=True)
-            slide, fileobj = _open_with_cache(cache_dir)
-            log.info("slide %s re-opened: level_count=%d", slide_id, slide.level_count)
-
-        return slide, fileobj
-    else:
-        url = f"s3://{bucket}/{key}"
-        slide = TiffSlide(url, storage_options=s3_opts)
-        return slide, None
-
-
-@dataclass
-class _Entry:
-    slide: TiffSlide
-    fileobj: Any  # fsspec file handle or None
+    return bucket, key, opts
 
 
 class SlideCache:
@@ -152,7 +88,7 @@ class SlideCache:
 
         # This thread is responsible for opening — do it WITHOUT the lock
         try:
-            slide, fileobj = _open_slide(slide_id)
+            slide, fileobj = _open_slide(slide_id, log)
         except Exception:
             with self._lock:
                 self._opening.pop(slide_id, None)
@@ -182,16 +118,3 @@ class SlideCache:
             for entry in self._cache.values():
                 _close_entry(entry)
             self._cache.clear()
-
-
-def _close_entry(entry: _Entry) -> None:
-    try:
-        entry.slide.close()
-    except Exception:
-        pass
-    if entry.fileobj is not None:
-        try:
-            entry.fileobj.close()
-        except Exception:
-            pass
-

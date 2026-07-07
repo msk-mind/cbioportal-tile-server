@@ -31,9 +31,7 @@ def max_zoom(slide: TiffSlide) -> int:
     return math.ceil(math.log2(max(w, h) / TILE_SIZE))
 
 
-def slide_metadata(slide: TiffSlide) -> dict:
-    w, h = slide.dimensions
-    mz = max_zoom(slide)
+def _slide_properties_metadata(slide: TiffSlide) -> tuple[float, float, str, int | None]:
     try:
         props = slide.properties
         # tiffslide uses its own namespace; fall back to openslide for compat
@@ -42,10 +40,15 @@ def slide_metadata(slide: TiffSlide) -> dict:
         vendor = props.get("tiffslide.vendor") or props.get("openslide.vendor", "") or ""
         obj_power = props.get("tiffslide.objective-power") or props.get("openslide.objective-power")
         objective_power = int(obj_power) if obj_power is not None else None
+        return mpp_x, mpp_y, vendor, objective_power
     except Exception:
-        mpp_x = mpp_y = 0.0
-        vendor = ""
-        objective_power = None
+        return 0.0, 0.0, "", None
+
+
+def slide_metadata(slide: TiffSlide) -> dict:
+    w, h = slide.dimensions
+    mz = max_zoom(slide)
+    mpp_x, mpp_y, vendor, objective_power = _slide_properties_metadata(slide)
 
     return {
         "dimensions": {"width": w, "height": h},
@@ -63,35 +66,44 @@ def slide_metadata(slide: TiffSlide) -> dict:
     }
 
 
-def get_tile_bytes(slide: TiffSlide, z: int, x: int, y: int) -> bytes:
-    """
-    Extract tile (x, y) at zoom level z and return JPEG bytes.
-
-    Raises ValueError for out-of-range coordinates.
-    """
+def _tile_geometry(slide: TiffSlide, z: int, x: int, y: int) -> tuple[int, int, int, int, int, int, int, int]:
     mz = max_zoom(slide)
     if z < 0 or z > mz:
         raise ValueError(f"zoom {z} out of range [0, {mz}]")
 
-    # Number of level-0 pixels per tile pixel at this zoom level
     target_ds = 2 ** (mz - z)
-
     slide_w, slide_h = slide.dimensions
-
-    # Top-left corner in level-0 coordinates
     x0 = x * TILE_SIZE * target_ds
     y0 = y * TILE_SIZE * target_ds
 
     if x0 >= slide_w or y0 >= slide_h:
         raise ValueError(f"tile ({x}, {y}, {z}) is outside slide bounds")
 
-    # How many level-0 pixels this tile actually covers (may be < full tile at edges)
     src_w = min(TILE_SIZE * target_ds, slide_w - x0)
     src_h = min(TILE_SIZE * target_ds, slide_h - y0)
-
-    # Desired output size before padding (≤ TILE_SIZE at edges)
     out_w = math.ceil(src_w / target_ds)
     out_h = math.ceil(src_h / target_ds)
+    return mz, target_ds, x0, y0, src_w, src_h, out_w, out_h
+
+
+def _resize_and_pad(region: Image.Image, out_w: int, out_h: int) -> Image.Image:
+    if region.size != (out_w, out_h):
+        region = region.resize((out_w, out_h), Image.LANCZOS)
+
+    if (out_w, out_h) != (TILE_SIZE, TILE_SIZE):
+        canvas = Image.new("RGB", (TILE_SIZE, TILE_SIZE), (255, 255, 255))
+        canvas.paste(region, (0, 0))
+        return canvas
+    return region
+
+
+def get_tile_bytes(slide: TiffSlide, z: int, x: int, y: int) -> bytes:
+    """
+    Extract tile (x, y) at zoom level z and return JPEG bytes.
+
+    Raises ValueError for out-of-range coordinates.
+    """
+    _, target_ds, x0, y0, src_w, src_h, out_w, out_h = _tile_geometry(slide, z, x, y)
 
     # Best available pyramid level (largest ds that doesn't exceed target)
     best_level = slide.get_best_level_for_downsample(target_ds)
@@ -112,20 +124,7 @@ def get_tile_bytes(slide: TiffSlide, z: int, x: int, y: int) -> bytes:
     # read_region returns RGBA; convert to RGB
     region = slide.read_region((x0, y0), best_level, (read_w, read_h))
     region = region.convert("RGB")
-
-    # Always resize to desired output size — this is the key step that
-    # downsamples when read_w > out_w (e.g. reading 512px to produce a
-    # 256px tile at z=max_zoom-1) and upsamples when a sub-level was used.
-    if region.size != (out_w, out_h):
-        region = region.resize((out_w, out_h), Image.LANCZOS)
-
-    # Pad edge tiles with white to reach full TILE_SIZE × TILE_SIZE
-    if (out_w, out_h) != (TILE_SIZE, TILE_SIZE):
-        canvas = Image.new("RGB", (TILE_SIZE, TILE_SIZE), (255, 255, 255))
-        canvas.paste(region, (0, 0))
-        region = canvas
-
-    return _encode_jpeg(region)
+    return _encode_jpeg(_resize_and_pad(region, out_w, out_h))
 
 
 def get_thumbnail_bytes(slide: TiffSlide, width: int, height: int) -> bytes:
