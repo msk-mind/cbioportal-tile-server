@@ -43,11 +43,11 @@ from app.constants import (  # noqa: E402
 
 # Patients with ≥1 slide in slide_inventory for the given patient list.
 _PATIENT_QUERY = """
-SELECT DISTINCT d.PATIENT_ID_IMPACT
+SELECT DISTINCT d.{patient_column} AS patient_id
 FROM {deid} d
 INNER JOIN {inventory} s ON d.image_id = s.image_id
-WHERE d.PATIENT_ID_IMPACT IN ({placeholders})
-ORDER BY d.PATIENT_ID_IMPACT
+WHERE {patient_column} IN ({placeholders})
+ORDER BY {patient_column}
 """
 
 
@@ -69,6 +69,35 @@ def _run_query(wc, warehouse_id: str, sql: str) -> list[dict]:
         raise RuntimeError(f"Databricks query failed: {err}")
     columns = [c.name for c in stmt.manifest.schema.columns]
     return [dict(zip(columns, row)) for row in (stmt.result.data_array or [])]
+
+
+def _split_table_name(fully_qualified_name: str) -> tuple[str, str, str]:
+    parts = fully_qualified_name.split(".")
+    if len(parts) != 3:
+        raise ValueError(
+            f"Expected catalog.schema.table for Databricks table, got {fully_qualified_name!r}"
+        )
+    return tuple(parts)
+
+
+def _resolve_patient_column(wc, warehouse_id: str) -> str:
+    catalog, schema, table = _split_table_name(_DEID_TABLE)
+    sql = f"""
+SELECT column_name
+FROM {catalog}.information_schema.columns
+WHERE table_schema = '{schema}'
+  AND table_name = '{table}'
+  AND column_name IN ('PATIENT_ID_IMPACT', 'PATIENT_ID')
+"""
+    rows = _run_query(wc, warehouse_id, sql)
+    available = {row["column_name"].upper(): row["column_name"].lower() for row in rows}
+    if "PATIENT_ID_IMPACT" in available:
+        return available["PATIENT_ID_IMPACT"]
+    if "PATIENT_ID" in available:
+        return available["PATIENT_ID"]
+    raise RuntimeError(
+        f"Could not find PATIENT_ID_IMPACT or PATIENT_ID in {_DEID_TABLE}"
+    )
 
 
 def _read_patient_ids(study_dir: Path) -> list[str]:
@@ -146,6 +175,9 @@ def main(argv: list[str] | None = None) -> int:
     from databricks.sdk import WorkspaceClient
     wc = WorkspaceClient()
 
+    patient_column = _resolve_patient_column(wc, args.warehouse_id)
+    print(f"Patient column: {patient_column}")
+
     servable: set[str] = set()
     chunk_size = 500  # IN clause limit safe for Databricks SQL
     for batch in _chunk(patient_ids, chunk_size):
@@ -158,11 +190,12 @@ def main(argv: list[str] | None = None) -> int:
         sql = _PATIENT_QUERY.format(
             deid=_DEID_TABLE,
             inventory=_INVENTORY,
+            patient_column=patient_column,
             placeholders=placeholders,
         )
         rows = _run_query(wc, args.warehouse_id, sql)
         for row in rows:
-            servable.add(row["PATIENT_ID_IMPACT"])
+            servable.add(row["patient_id"])
 
     servable_list = [p for p in patient_ids if p in servable]
     missing = [p for p in patient_ids if p not in servable]
