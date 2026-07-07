@@ -6,7 +6,7 @@ changes to table names or the warehouse ID only need to be made here.
 """
 
 #: De-identified slide ↔ clinical join table (PHI-restricted via Unity Catalog)
-DEID_TABLE = "cdsi_prod.pathology_data_mining.impact_matched_slides_deid"
+DEID_TABLE = "cdsi_eng_phi.pdm_base_tables_dev.impact_block_matched_slides_v1"
 
 #: Slide file inventory — contains s3:// paths for each image_id
 INVENTORY_TABLE = "cdsi_eng_phi.pdm_base_tables.slide_inventory"
