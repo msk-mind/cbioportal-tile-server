@@ -85,10 +85,10 @@ def _read_sample_ids(study_dir: Path) -> list[str]:
             if line.startswith("#"):
                 continue
             cols = line.rstrip("\n").split("\t")
-            if cols[0] == "PATIENT_ID":
+            if cols[0] == "SAMPLE_ID":
                 continue
-            if len(cols) >= 2:
-                sample_ids.append(cols[1])
+            if cols and cols[0]:
+                sample_ids.append(cols[0])
     return sample_ids
 
 

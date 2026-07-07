@@ -90,18 +90,20 @@ def _new_sample(row: dict, sample_id: str) -> dict:
 
 
 def _new_part(row: dict, part_number: int | None) -> dict:
+    path_dx_title = row.get("path_dx_title") or row.get("PATH_DX_SPEC_TITLE")
     return {
         "part_number": part_number,
         "part_designator": str(part_number) if part_number is not None else None,
         "part_type": row.get("part_type"),
         "part_description": row.get("part_description"),
         "subspecialty": None,
-        "path_dx_title": row.get("part_description"),
+        "path_dx_title": path_dx_title,
         "blocks": {},
     }
 
 
 def _new_slide(row: dict, block_label: str | None, block_number: str, is_hne: bool, is_ihc: bool, can_serve: bool) -> dict:
+    path_dx_title = row.get("path_dx_title") or row.get("PATH_DX_SPEC_TITLE")
     return {
         "image_id": str(row.get("image_id")),
         "stain_name": row.get("stain_name"),
@@ -115,7 +117,7 @@ def _new_slide(row: dict, block_label: str | None, block_number: str, is_hne: bo
         "block_label": block_label,
         "block_number": block_number,
         "part_description": row.get("part_description"),
-        "path_dx_title": row.get("part_description"),
+        "path_dx_title": path_dx_title,
     }
 
 

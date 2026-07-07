@@ -12,6 +12,7 @@ PATIENT_SQL = f"""
 SELECT
     d.image_id, d.PATIENT_ID, d.sample_id,
     d.block_id, d.block_label, d.part_type, d.part_description,
+    d.PATH_DX_SPEC_TITLE AS path_dx_title,
     d.stain_name, d.stain_group,
     d.CANCER_TYPE, d.CANCER_TYPE_DETAILED, d.ONCOTREE_CODE,
     d.PRIMARY_SITE, d.SAMPLE_TYPE, d.METASTATIC_SITE, d.TUMOR_PURITY,

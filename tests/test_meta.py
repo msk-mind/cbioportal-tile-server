@@ -158,12 +158,14 @@ class TestGetPatientHierarchy:
         assert s["sample_id"]    == "P-0001-T01-IM6"
         assert s["oncotree_code"] == "COAD"
         p = s["parts"][0]
+        assert p["path_dx_title"] == "Colon resection"
         b = p["blocks"][0]
         sl = b["slides"][0]
         assert sl["image_id"]       == "1"
         assert sl["is_hne"]         is True
         assert sl["is_ihc"]         is False
         assert sl["can_serve_tiles"] is True
+        assert sl["path_dx_title"] == "Colon resection"
 
     def test_unservable_slide_has_false_can_serve(self):
         result = _hierarchy([_base_row(slide_path="")])
