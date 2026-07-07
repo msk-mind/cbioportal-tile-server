@@ -10,25 +10,28 @@
 
 CREATE OR REPLACE TABLE cdsi_prod.pathology_data_mining.sample_wsi_summary AS
 SELECT
-    d.SAMPLE_ID_IMPACT                               AS sample_id,
-    d.PATIENT_ID_IMPACT                              AS patient_id,
+    d.sample_id                                      AS sample_id,
+    d.PATIENT_ID                                     AS patient_id,
     COUNT(DISTINCT CASE
         WHEN s.path LIKE 's3://%'
          AND (
-            d.IS_HNE = 1
-            OR d.IS_IHC = 1
+            LOWER(COALESCE(d.stain_group, d.stain_name, '')) LIKE '%h&e%'
+            OR LOWER(COALESCE(d.stain_group, '')) LIKE '%ihc%'
          )
         THEN d.image_id
         ELSE NULL
     END)                                             AS servable_slide_count,
-    MAX(CASE WHEN d.IS_HNE = 1 AND s.path LIKE 's3://%' THEN 1 ELSE 0 END) AS has_hne,
-    MAX(CASE WHEN d.IS_IHC = 1 AND s.path LIKE 's3://%' THEN 1 ELSE 0 END) AS has_ihc,
+    MAX(CASE WHEN LOWER(COALESCE(d.stain_group, d.stain_name, '')) LIKE '%h&e%' AND s.path LIKE 's3://%' THEN 1 ELSE 0 END) AS has_hne,
+    MAX(CASE WHEN LOWER(COALESCE(d.stain_group, '')) LIKE '%ihc%' AND s.path LIKE 's3://%' THEN 1 ELSE 0 END) AS has_ihc,
     ARRAY_JOIN(
         ARRAY_SORT(
             COLLECT_SET(
                 CASE
                     WHEN s.path LIKE 's3://%'
-                     AND (d.IS_HNE = 1 OR d.IS_IHC = 1)
+                     AND (
+                        LOWER(COALESCE(d.stain_group, d.stain_name, '')) LIKE '%h&e%'
+                        OR LOWER(COALESCE(d.stain_group, '')) LIKE '%ihc%'
+                     )
                     THEN d.stain_name
                     ELSE NULL
                 END
@@ -36,7 +39,7 @@ SELECT
         ),
         ';'
     )                                                AS stain_types
-FROM cdsi_prod.pathology_data_mining.impact_matched_slides_deid d
+FROM cdsi_eng_phi.pdm_base_tables_dev.impact_block_matched_slides_v1 d
 LEFT JOIN cdsi_eng_phi.pdm_base_tables.slide_inventory s ON d.image_id = s.image_id
-WHERE d.SAMPLE_ID_IMPACT IS NOT NULL
-GROUP BY d.SAMPLE_ID_IMPACT, d.PATIENT_ID_IMPACT
+WHERE d.sample_id IS NOT NULL
+GROUP BY d.sample_id, d.PATIENT_ID

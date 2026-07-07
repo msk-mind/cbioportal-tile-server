@@ -62,7 +62,7 @@ class TestSearchSuggestionsRouting:
         rows = [{"patient_id": "P-1234567", "cancer_type": "CRC", "slide_count": 5}]
         results, mock_rq = self._call("P-12", rows)
         sql = mock_rq.call_args[0][0]
-        assert "PATIENT_ID_IMPACT" in sql
+        assert "PATIENT_ID LIKE :prefix" in sql
         assert results[0]["type"] == "patient"
         assert results[0]["id"]   == "P-1234567"
         assert "sublabel" in results[0]
@@ -71,7 +71,7 @@ class TestSearchSuggestionsRouting:
         rows = [{"sample_id": "P-1234-T01-IM6", "patient_id": "P-1234", "cancer_type": "NSCLC"}]
         results, mock_rq = self._call("P-1234-T", rows)
         sql = mock_rq.call_args[0][0]
-        assert "SAMPLE_ID_IMPACT" in sql
+        assert "sample_id LIKE :prefix" in sql
         assert results[0]["type"]  == "sample"
         assert results[0]["id"]    == "P-1234-T01-IM6"
 
@@ -110,21 +110,14 @@ class TestSearchSuggestionsRouting:
 def _base_row(**overrides):
     row = {
         "image_id":                1,
-        "PATIENT_ID_IMPACT":       "P-0001",
-        "SAMPLE_ID_IMPACT":        "P-0001-T01-IM6",
-        "SAMPLE_ID_PATH":          None,
-        "PART_NUMBER":             1,
-        "part_designator":         "A",
+        "PATIENT_ID":              "P-0001",
+        "sample_id":               "P-0001-T01-IM6",
+        "block_id":                "specimen/1-A1",
         "part_type":               "Primary",
         "part_description":        "Colon",
-        "BLOCK_NUMBER":            "1",
-        "BLOCK_LABEL":             "A1",
-        "barcode":                 "BC001",
-        "IS_HNE":                  "1",
-        "IS_IHC":                  "0",
+        "block_label":             "A1",
         "stain_name":              "H&E",
         "stain_group":             "H&E (Initial)",
-        "subspecialty":            "GI",
         "CANCER_TYPE":             "Colorectal Cancer",
         "CANCER_TYPE_DETAILED":    "Colon Adenocarcinoma",
         "ONCOTREE_CODE":           "COAD",
@@ -184,8 +177,8 @@ class TestGetPatientHierarchy:
 
     def test_two_samples_in_separate_buckets(self):
         rows = [
-            _base_row(SAMPLE_ID_IMPACT="P-0001-T01-IM6", image_id=1),
-            _base_row(SAMPLE_ID_IMPACT="P-0001-T02-IM6", image_id=2),
+            _base_row(sample_id="P-0001-T01-IM6", image_id=1),
+            _base_row(sample_id="P-0001-T02-IM6", image_id=2),
         ]
         result = _hierarchy(rows)
         sample_ids = {s["sample_id"] for s in result["samples"]}
@@ -199,10 +192,8 @@ class TestGetPatientHierarchy:
 
     def test_hne_sorts_before_ihc(self):
         rows = [
-            _base_row(image_id=2, IS_HNE="0", IS_IHC="1",
-                      stain_name="PD-L1", stain_group="IHC"),
-            _base_row(image_id=1, IS_HNE="1", IS_IHC="0",
-                      stain_name="H&E",   stain_group="H&E (Initial)"),
+            _base_row(image_id=2, stain_name="PD-L1", stain_group="IHC"),
+            _base_row(image_id=1, stain_name="H&E", stain_group="H&E (Initial)"),
         ]
         result = _hierarchy(rows)
         slides = result["samples"][0]["parts"][0]["blocks"][0]["slides"]
