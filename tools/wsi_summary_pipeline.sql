@@ -12,13 +12,26 @@ CREATE OR REPLACE TABLE cdsi_prod.pathology_data_mining.sample_wsi_summary AS
 SELECT
     d.SAMPLE_ID_IMPACT                               AS sample_id,
     d.PATIENT_ID_IMPACT                              AS patient_id,
-    COUNT(s.image_id)                                AS servable_slide_count,
-    MAX(CASE WHEN d.IS_HNE = 1 AND s.image_id IS NOT NULL THEN 1 ELSE 0 END)  AS has_hne,
-    MAX(CASE WHEN d.IS_IHC = 1 AND s.image_id IS NOT NULL THEN 1 ELSE 0 END)  AS has_ihc,
+    COUNT(DISTINCT CASE
+        WHEN s.path LIKE 's3://%'
+         AND (
+            d.IS_HNE = 1
+            OR d.IS_IHC = 1
+         )
+        THEN d.image_id
+        ELSE NULL
+    END)                                             AS servable_slide_count,
+    MAX(CASE WHEN d.IS_HNE = 1 AND s.path LIKE 's3://%' THEN 1 ELSE 0 END) AS has_hne,
+    MAX(CASE WHEN d.IS_IHC = 1 AND s.path LIKE 's3://%' THEN 1 ELSE 0 END) AS has_ihc,
     ARRAY_JOIN(
         ARRAY_SORT(
             COLLECT_SET(
-                CASE WHEN s.image_id IS NOT NULL THEN d.stain_name ELSE NULL END
+                CASE
+                    WHEN s.path LIKE 's3://%'
+                     AND (d.IS_HNE = 1 OR d.IS_IHC = 1)
+                    THEN d.stain_name
+                    ELSE NULL
+                END
             )
         ),
         ';'
