@@ -65,15 +65,6 @@ class Settings:
     blockcache_path: str = field(default_factory=lambda: _env_str("BLOCKCACHE_PATH", ""))
     blockcache_block_size: int = field(default_factory=lambda: _env_int("BLOCKCACHE_BLOCK_SIZE", 8 * 1024 * 1024))
 
-    # Annotation API
-    annotation_database_url: str = field(default_factory=lambda: _env_str("ANNOTATION_DATABASE_URL", ""))
-    annotation_db_path: str = field(default_factory=lambda: _env_str("ANNOTATION_DB_PATH", "/data/annotations.db"))
-    keycloak_jwks_url: str = field(default_factory=lambda: _env_str("KEYCLOAK_JWKS_URL", ""))
-    annotation_auth_enabled: bool = field(default_factory=lambda: _env_bool("ANNOTATION_AUTH_ENABLED", True))
-
-    # OncoKB
-    oncokb_api_token: str = field(default_factory=lambda: _env_str("ONCOKB_API_TOKEN", ""))
-
     # CORS
     cors_origins: list[str] = field(
         default_factory=lambda: _env_csv(
