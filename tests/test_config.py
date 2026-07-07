@@ -77,3 +77,10 @@ class TestOtherSettings:
     def test_cors_origins_strips_whitespace(self):
         s = make_settings(CORS_ORIGINS="https://a.example.com, https://b.example.com")
         assert s.cors_origins == ["https://a.example.com", "https://b.example.com"]
+
+    def test_cors_origins_default_to_internal_cbioportal_hosts(self):
+        s = make_settings()
+        assert s.cors_origins == [
+            "https://cbioportal.mskcc.org",
+            "https://triage.cbioportal.mskcc.org",
+        ]
