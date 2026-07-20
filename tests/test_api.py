@@ -87,6 +87,10 @@ class TestHealth:
         assert isinstance(data["n_workers"], int)
         assert data["n_workers"] > 0
 
+    def test_wsi_namespace_health(self, api_client):
+        resp = api_client.get("/wsi/health")
+        assert resp.status_code == 200
+
 
 # ---------------------------------------------------------------------------
 # /tiles/{slide_id}/metadata
@@ -177,6 +181,11 @@ class TestPatientRoute:
         # Simpler: patch at the module level and make _in_thread call it
         with patch("app.main._in_thread", new=AsyncMock(return_value=None)):
             resp = api_client.get("/patient/P-NOTEXIST")
+        assert resp.status_code == 404
+
+    def test_wsi_namespace_reaches_patient_route(self, api_client):
+        with patch("app.main._in_thread", new=AsyncMock(return_value=None)):
+            resp = api_client.get("/wsi/patient/GENERIC-PATIENT-ID")
         assert resp.status_code == 404
 
     def test_databricks_error_returns_502(self, api_client):

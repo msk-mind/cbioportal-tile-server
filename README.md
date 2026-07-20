@@ -15,6 +15,9 @@ OpenSeadragon via ZXY tile requests.  Used as the backend for the cBioPortal H&E
 | GET | `/tiles/{slide_id}/thumbnail` | JPEG thumbnail |
 | GET | `/tiles/{slide_id}/zxy/{z}/{x}/{y}` | ZXY tile (JPEG) |
 
+The same endpoints are also available under the explicit `/wsi` namespace,
+for example `/wsi/patient/{patient_id}` and `/wsi/tiles/{slide_id}/...`.
+
 ## Quick start
 
 ```bash
