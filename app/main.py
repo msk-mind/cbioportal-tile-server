@@ -80,6 +80,15 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+
+@app.middleware("http")
+async def wsi_namespace(request, call_next):
+    """Expose the API under /wsi without changing its internal route paths."""
+    path = request.scope["path"]
+    if path == "/wsi" or path.startswith("/wsi/"):
+        request.scope["path"] = path[4:] or "/"
+    return await call_next(request)
+
 TILE_CACHE_HEADERS  = {"Cache-Control": "public, max-age=604800, immutable"}  # 7 days — immutable image data
 THUMB_CACHE_HEADERS = {"Cache-Control": "public, max-age=86400"}
 # Patient/sample metadata contains PHI — must not be cached by shared/public proxies
