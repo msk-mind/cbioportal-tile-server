@@ -213,7 +213,7 @@ def test_build_pathology_timeline_rows_collapses_non_servable_duplicate_specimen
     ]
 
 
-def test_build_pathology_timeline_rows_treats_non_ihc_diagnostic_slides_as_hne():
+def test_build_pathology_timeline_rows_skips_unknown_stain_types():
     rows = build_pathology_timeline_rows(
         [
             {
@@ -248,23 +248,7 @@ def test_build_pathology_timeline_rows_treats_non_ihc_diagnostic_slides_as_hne()
         "study_1",
     )
 
-    assert rows == [
-        [
-            "P-1",
-            "8",
-            "",
-            "PATHOLOGY SLIDES",
-            "S-1",
-            "H&E",
-            "PART",
-            "Part 1",
-            "2",
-            "0",
-            "2",
-            "Procedure date relative to tumor sequencing",
-            "/patient/wsiHESlides?studyId=study_1&caseId=P-1&stainFilter=hne&matchLevel=PART&specimenKey=part%3A%3A1&sampleId=S-1",
-        ]
-    ]
+    assert rows == []
 
 
 def test_build_pathology_timeline_rows_sanitizes_multiline_specimen_labels():

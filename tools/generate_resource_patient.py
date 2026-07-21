@@ -41,11 +41,12 @@ from app.constants import (  # noqa: E402
     DEFAULT_WAREHOUSE_ID as _DEFAULT_WAREHOUSE,
 )
 
-# Patients with any canonical pathology association for the given patient list.
+# Patients with at least one servable canonical pathology association.
 _PATIENT_QUERY = """
 SELECT DISTINCT patient_id
 FROM {canonical_table}
 WHERE patient_id IN ({placeholders})
+  AND slide_path LIKE 's3://%'
 ORDER BY patient_id
 """
 
@@ -57,6 +58,7 @@ SELECT
     COUNT(DISTINCT patient_id) AS pathology_patient_count
 FROM {canonical_table}
 WHERE patient_id IN ({placeholders})
+  AND slide_path LIKE 's3://%'
 """
 
 

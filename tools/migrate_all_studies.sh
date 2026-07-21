@@ -70,15 +70,22 @@ for study in "${STUDIES[@]}"; do
   echo ">>> $study  $(date +%H:%M:%S)" | tee -a "$LOG_FILE"
 
   set +e
-  python3 "$REPO_ROOT/tools/generate_wsi_clinical_attrs.py" \
-    --study-dir "$dir" 2>&1 | tee -a "$LOG_FILE"
-  cleanup_rc=${PIPESTATUS[0]}
-  python3 "$REPO_ROOT/tools/generate_wsi_timepoint_clinical_attrs.py" \
-    --study-dir "$dir" 2>&1 | tee -a "$LOG_FILE"
-  timepoint_cleanup_rc=${PIPESTATUS[0]}
-  python3 "$REPO_ROOT/tools/generate_pathology_timeline_files.py" \
-    --study-dir "$dir" 2>&1 | tee -a "$LOG_FILE"
-  timeline_rc=${PIPESTATUS[0]}
+  if [ -n "$DRY_RUN" ]; then
+    echo "  dry run — skipping study-file cleanup and timeline generation" | tee -a "$LOG_FILE"
+    cleanup_rc=0
+    timepoint_cleanup_rc=0
+    timeline_rc=0
+  else
+    python3 "$REPO_ROOT/tools/generate_wsi_clinical_attrs.py" \
+      --study-dir "$dir" 2>&1 | tee -a "$LOG_FILE"
+    cleanup_rc=${PIPESTATUS[0]}
+    python3 "$REPO_ROOT/tools/generate_wsi_timepoint_clinical_attrs.py" \
+      --study-dir "$dir" 2>&1 | tee -a "$LOG_FILE"
+    timepoint_cleanup_rc=${PIPESTATUS[0]}
+    python3 "$REPO_ROOT/tools/generate_pathology_timeline_files.py" \
+      --study-dir "$dir" 2>&1 | tee -a "$LOG_FILE"
+    timeline_rc=${PIPESTATUS[0]}
+  fi
   python3 "$REPO_ROOT/tools/generate_resource_patient.py" \
     --study-dir "$dir" \
     --base-url "$BASE_URL" \

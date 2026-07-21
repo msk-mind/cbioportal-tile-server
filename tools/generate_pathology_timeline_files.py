@@ -181,7 +181,7 @@ def _infer_slide_type(
     name = re.sub(r"\s+", " ", (stain_name or "").lower()).strip()
     if group == "ihc":
         return "IHC"
-    if group or name:
+    if group in {"h&e", "h&e (initial)", "h&e (other)"} or name in {"h&e", "he"}:
         return "H&E"
     return None
 
