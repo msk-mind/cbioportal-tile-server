@@ -33,7 +33,7 @@ services:
       PATIENT_CACHE_TTL: ${PATIENT_CACHE_TTL:-300}   # 5 min for dev; 86400 in prod
 
       # ── CORS — add the viewer origin so the browser can reach tile APIs ───
-      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:8080,http://localhost:3000,https://cbioportal.org,https://www.cbioportal.org}
+      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:8080,http://localhost:3000,https://cbioportal.mskcc.org,https://triage.cbioportal.mskcc.org}
 
       # ── Capacity (tune to host RAM; each open SVS ≈ 50–200 MB) ───────────
       MAX_OPEN_SLIDES: ${MAX_OPEN_SLIDES:-16}

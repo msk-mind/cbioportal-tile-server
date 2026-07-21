@@ -15,6 +15,9 @@ OpenSeadragon via ZXY tile requests.  Used as the backend for the cBioPortal H&E
 | GET | `/tiles/{slide_id}/thumbnail` | JPEG thumbnail |
 | GET | `/tiles/{slide_id}/zxy/{z}/{x}/{y}` | ZXY tile (JPEG) |
 
+The same endpoints are also available under the explicit `/wsi` namespace,
+for example `/wsi/patient/{patient_id}` and `/wsi/tiles/{slide_id}/...`.
+
 ## Quick start
 
 ```bash
@@ -37,7 +40,7 @@ All settings are environment variables (see `app/config.py`):
 | `REDIS_URL` | `redis://redis:6379` | Redis connection |
 | `MAX_OPEN_SLIDES` | `256` | LRU slide cache capacity |
 | `BLOCKCACHE_PATH` | — | NVMe block cache directory |
-| `CORS_ORIGINS` | public cBioPortal origins | Comma-separated allowed origins |
+| `CORS_ORIGINS` | internal MSK cBioPortal origins | Comma-separated allowed origins |
 
 ## Running tests
 

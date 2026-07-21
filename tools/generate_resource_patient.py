@@ -29,6 +29,7 @@ from __future__ import annotations
 
 import argparse
 import csv
+import json
 import os
 import sys
 from pathlib import Path
@@ -36,18 +37,28 @@ from pathlib import Path
 # Allow importing from the app package when running from the repo root.
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from app.constants import (  # noqa: E402
-    DEID_TABLE as _DEID_TABLE,
-    INVENTORY_TABLE as _INVENTORY,
+    CANONICAL_ASSOCIATION_TABLE as _CANONICAL_ASSOCIATION_TABLE,
     DEFAULT_WAREHOUSE_ID as _DEFAULT_WAREHOUSE,
 )
 
-# Patients with ≥1 slide in slide_inventory for the given patient list.
+# Patients with at least one servable canonical pathology association.
 _PATIENT_QUERY = """
-SELECT DISTINCT d.PATIENT_ID_IMPACT
-FROM {deid} d
-INNER JOIN {inventory} s ON d.image_id = s.image_id
-WHERE d.PATIENT_ID_IMPACT IN ({placeholders})
-ORDER BY d.PATIENT_ID_IMPACT
+SELECT DISTINCT patient_id
+FROM {canonical_table}
+WHERE patient_id IN ({placeholders})
+  AND slide_path LIKE 's3://%'
+ORDER BY patient_id
+"""
+
+_MANIFEST_QUERY = """
+SELECT
+    COALESCE(MAX(updated_at), CURRENT_TIMESTAMP()) AS updated_at,
+    MAX(association_version) AS association_version,
+    COUNT(*) AS association_row_count,
+    COUNT(DISTINCT patient_id) AS pathology_patient_count
+FROM {canonical_table}
+WHERE patient_id IN ({placeholders})
+  AND slide_path LIKE 's3://%'
 """
 
 
@@ -146,7 +157,8 @@ def main(argv: list[str] | None = None) -> int:
     from databricks.sdk import WorkspaceClient
     wc = WorkspaceClient()
 
-    servable: set[str] = set()
+    pathology_patients: set[str] = set()
+    manifest_row: dict | None = None
     chunk_size = 500  # IN clause limit safe for Databricks SQL
     for batch in _chunk(patient_ids, chunk_size):
         # Escape single quotes before interpolation — patient IDs from a
@@ -156,18 +168,41 @@ def main(argv: list[str] | None = None) -> int:
         escaped = [p.replace("'", "\\'") for p in batch]
         placeholders = ", ".join(f"'{p}'" for p in escaped)
         sql = _PATIENT_QUERY.format(
-            deid=_DEID_TABLE,
-            inventory=_INVENTORY,
+            canonical_table=_CANONICAL_ASSOCIATION_TABLE,
             placeholders=placeholders,
         )
         rows = _run_query(wc, args.warehouse_id, sql)
         for row in rows:
-            servable.add(row["PATIENT_ID_IMPACT"])
+            pathology_patients.add(row["patient_id"])
 
-    servable_list = [p for p in patient_ids if p in servable]
-    missing = [p for p in patient_ids if p not in servable]
-    print(f"Patients with servable slides : {len(servable_list)}")
-    print(f"Patients without slides       : {len(missing)}")
+        manifest_sql = _MANIFEST_QUERY.format(
+            canonical_table=_CANONICAL_ASSOCIATION_TABLE,
+            placeholders=placeholders,
+        )
+        manifest_rows = _run_query(wc, args.warehouse_id, manifest_sql)
+        if manifest_rows:
+            batch_manifest = manifest_rows[0]
+            if manifest_row is None:
+                manifest_row = batch_manifest
+            else:
+                manifest_row["association_row_count"] = int(
+                    manifest_row.get("association_row_count") or 0
+                ) + int(batch_manifest.get("association_row_count") or 0)
+                manifest_row["pathology_patient_count"] = int(
+                    manifest_row.get("pathology_patient_count") or 0
+                ) + int(batch_manifest.get("pathology_patient_count") or 0)
+                if batch_manifest.get("updated_at") and (
+                    not manifest_row.get("updated_at")
+                    or str(batch_manifest["updated_at"]) > str(manifest_row["updated_at"])
+                ):
+                    manifest_row["updated_at"] = batch_manifest["updated_at"]
+                if batch_manifest.get("association_version"):
+                    manifest_row["association_version"] = batch_manifest["association_version"]
+
+    servable_list = [p for p in patient_ids if p in pathology_patients]
+    missing = [p for p in patient_ids if p not in pathology_patients]
+    print(f"Patients with pathology rows  : {len(servable_list)}")
+    print(f"Patients without pathology    : {len(missing)}")
     if missing:
         print("  (no slides for: " + ", ".join(missing[:10])
               + (" …" if len(missing) > 10 else "") + ")")
@@ -219,9 +254,27 @@ def main(argv: list[str] | None = None) -> int:
     )
     print(f"Written: {meta_patient}")
 
+    manifest_path = study_dir / "wsi_snapshot_manifest.json"
+    manifest_payload = {
+        "study_id": study_id,
+        "source_table": _CANONICAL_ASSOCIATION_TABLE,
+        "patient_count_in_study": len(patient_ids),
+        "pathology_patient_count": len(servable_list),
+        "association_version": None if manifest_row is None else manifest_row.get("association_version"),
+        "updated_at": None if manifest_row is None else (
+            None if manifest_row.get("updated_at") is None else str(manifest_row.get("updated_at"))
+        ),
+        "association_row_count": 0 if manifest_row is None else int(manifest_row.get("association_row_count") or 0),
+    }
+    manifest_path.write_text(
+        json.dumps(manifest_payload, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    print(f"Written: {manifest_path}")
+
     print("\nDone. Next steps:")
-    print("  1. Remove data_resource_sample.txt and meta_resource_sample.txt if present.")
-    print("  2. Reload the study into cBioPortal.")
+    print("  1. Reload the study into cBioPortal.")
+    print("  2. Confirm stale WSI sample attributes are absent after import.")
     return 0
 
 

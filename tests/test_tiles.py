@@ -6,7 +6,15 @@ from unittest.mock import MagicMock
 import pytest
 from PIL import Image
 
-from app.tiles import TILE_SIZE, get_tile_bytes, max_zoom, slide_metadata
+from app.tiles import (
+    TILE_SIZE,
+    _resize_and_pad,
+    _slide_properties_metadata,
+    _tile_geometry,
+    get_tile_bytes,
+    max_zoom,
+    slide_metadata,
+)
 from tests.conftest import make_mock_slide
 
 
@@ -28,6 +36,15 @@ class TestMaxZoom:
 
 
 class TestSlideMetadata:
+    def test_slide_properties_helper_parses_values(self):
+        slide = make_mock_slide()
+        assert _slide_properties_metadata(slide) == (
+            pytest.approx(0.5034),
+            pytest.approx(0.5034),
+            "aperio",
+            20,
+        )
+
     def test_tiffslide_namespace_parsed(self):
         meta = slide_metadata(make_mock_slide())
         assert meta["mpp"]["x"]       == pytest.approx(0.5034)
@@ -67,6 +84,34 @@ class TestSlideMetadata:
         meta = slide_metadata(make_mock_slide(2048, 1536))
         assert meta["dimensions"]["width"]  == 2048
         assert meta["dimensions"]["height"] == 1536
+
+
+class TestTileHelpers:
+    def test_tile_geometry_returns_expected_values(self):
+        slide = make_mock_slide(1024, 1024, levels=3)
+        _, target_ds, x0, y0, src_w, src_h, out_w, out_h = _tile_geometry(slide, 2, 1, 1)
+        assert target_ds == 1
+        assert x0 == TILE_SIZE
+        assert y0 == TILE_SIZE
+        assert src_w == TILE_SIZE
+        assert src_h == TILE_SIZE
+        assert out_w == TILE_SIZE
+        assert out_h == TILE_SIZE
+
+    def test_tile_geometry_rejects_invalid_tile(self):
+        slide = make_mock_slide(256, 256, levels=1)
+        with pytest.raises(ValueError):
+            _tile_geometry(slide, 0, 1, 0)
+
+    def test_resize_and_pad_keeps_full_tiles(self):
+        region = Image.new("RGB", (TILE_SIZE, TILE_SIZE), (0, 0, 0))
+        result = _resize_and_pad(region, TILE_SIZE, TILE_SIZE)
+        assert result.size == (TILE_SIZE, TILE_SIZE)
+
+    def test_resize_and_pad_pads_edge_tiles(self):
+        region = Image.new("RGB", (128, 128), (0, 0, 0))
+        result = _resize_and_pad(region, 128, 128)
+        assert result.size == (TILE_SIZE, TILE_SIZE)
 
 
 class TestGetTileBytes:

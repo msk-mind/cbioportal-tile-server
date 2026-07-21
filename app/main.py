@@ -21,11 +21,12 @@ from contextlib import asynccontextmanager
 # by default, so INFO from app.* would be silently dropped without this.
 logging.basicConfig(level=logging.INFO, format="%(levelname)s:%(name)s:%(message)s")
 
-from fastapi import FastAPI, HTTPException, Response
+from fastapi import FastAPI, HTTPException, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 
 from . import cache as tile_cache
 from . import meta
+from .auth import InvalidWsiToken, validate_wsi_token
 from .config import settings
 from .meta import get_patient_hierarchy, get_slide_dbmeta, search_suggestions
 from .slides import SlideCache
@@ -80,8 +81,39 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-TILE_CACHE_HEADERS  = {"Cache-Control": "public, max-age=604800, immutable"}  # 7 days — immutable image data
-THUMB_CACHE_HEADERS = {"Cache-Control": "public, max-age=86400"}
+
+@app.middleware("http")
+async def require_wsi_capability(request: Request, call_next):
+    """Require a cBioPortal-issued capability for every non-health API request."""
+    if request.scope["path"] in ("/health", "/wsi/health"):
+        return await call_next(request)
+    if not settings.wsi_auth_required:
+        return await call_next(request)
+
+    authorization = request.headers.get("authorization", "")
+    if not authorization.startswith("Bearer "):
+        return Response(status_code=401, headers={"WWW-Authenticate": "Bearer"})
+    try:
+        validate_wsi_token(
+            authorization[7:].strip(),
+            settings.wsi_auth_secret,
+            settings.wsi_auth_audience,
+        )
+    except InvalidWsiToken:
+        return Response(status_code=401, headers={"WWW-Authenticate": "Bearer"})
+    return await call_next(request)
+
+
+@app.middleware("http")
+async def wsi_namespace(request, call_next):
+    """Expose the API under /wsi without changing its internal route paths."""
+    path = request.scope["path"]
+    if path == "/wsi" or path.startswith("/wsi/"):
+        request.scope["path"] = path[4:] or "/"
+    return await call_next(request)
+
+TILE_CACHE_HEADERS  = {"Cache-Control": "private, max-age=3600"}
+THUMB_CACHE_HEADERS = {"Cache-Control": "private, max-age=300"}
 # Patient/sample metadata contains PHI — must not be cached by shared/public proxies
 PHI_CACHE_HEADERS   = {"Cache-Control": "private, no-store"}
 
@@ -224,11 +256,13 @@ async def search(q: str = ""):
 async def metadata(slide_id: str):
     cached = await tile_cache.get_metadata(slide_id)
     if cached is not None:
-        return cached
+        return Response(content=json.dumps(cached), media_type="application/json",
+                        headers=PHI_CACHE_HEADERS)
     slide = await _in_thread(_get_slide, slide_id)
     result = await _in_thread(slide_metadata, slide)
     await tile_cache.set_metadata(slide_id, result)
-    return result
+    return Response(content=json.dumps(result), media_type="application/json",
+                    headers=PHI_CACHE_HEADERS)
 
 
 @app.get("/tiles/{slide_id}/warmup", include_in_schema=False)
@@ -277,10 +311,10 @@ async def tile(slide_id: str, z: int, x: int, y: int):
         data = await _in_thread(get_tile_bytes, slide, z, x, y)
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc))
-    except Exception as exc:
+    except Exception:
         logger.exception("Tile extraction failed for %s z=%d x=%d y=%d",
                          slide_id, z, x, y)
-        raise HTTPException(status_code=500, detail=str(exc))
+        raise HTTPException(status_code=500, detail="Tile extraction failed")
 
     await tile_cache.set_tile(slide_id, z, x, y, data)
     return Response(content=data, media_type="image/jpeg",

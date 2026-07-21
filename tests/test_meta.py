@@ -5,7 +5,14 @@ from unittest.mock import patch
 
 import pytest
 
-from app.meta import _coerce, get_patient_hierarchy, get_slide_path, search_suggestions
+from app import meta_store
+from app.meta import (
+    _coerce,
+    _infer_stain_flags,
+    get_patient_hierarchy,
+    get_slide_path,
+    search_suggestions,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -28,6 +35,35 @@ class TestCoerce:
 
     def test_string_unchanged(self):
         assert _coerce("hello") == "hello"
+
+
+class TestInferStainFlags:
+    @pytest.mark.parametrize(
+        "stain_name",
+        ["IMMUNO RECUT", "Immuno Recut L1", "DM UNSTAINED RECUT"],
+    )
+    def test_generic_ihc_preparations_follow_the_source_ihc_group(self, stain_name):
+        assert _infer_stain_flags("IHC", stain_name) == (False, True)
+
+    @pytest.mark.parametrize(
+        "stain_name",
+        ["ER (Quant)", "Her2Neu (Quant)", "Ki-67 (MIB-1)", "PD-L1(SP263)"],
+    )
+    def test_named_ihc_markers_remain_ihc(self, stain_name):
+        assert _infer_stain_flags("IHC", stain_name) == (False, True)
+
+    @pytest.mark.parametrize(
+        ("stain_group", "stain_name"),
+        [
+            ("Histology", "H&E"),
+            ("Histology", "HE"),
+            ("H&E (Initial)", "Histology"),
+        ],
+    )
+    def test_histology_style_stains_are_treated_as_hne(
+        self, stain_group, stain_name
+    ):
+        assert _infer_stain_flags(stain_group, stain_name) == (True, False)
 
 
 # ---------------------------------------------------------------------------
@@ -62,7 +98,7 @@ class TestSearchSuggestionsRouting:
         rows = [{"patient_id": "P-1234567", "cancer_type": "CRC", "slide_count": 5}]
         results, mock_rq = self._call("P-12", rows)
         sql = mock_rq.call_args[0][0]
-        assert "PATIENT_ID_IMPACT" in sql
+        assert "PATIENT_ID LIKE :prefix" in sql
         assert results[0]["type"] == "patient"
         assert results[0]["id"]   == "P-1234567"
         assert "sublabel" in results[0]
@@ -71,7 +107,7 @@ class TestSearchSuggestionsRouting:
         rows = [{"sample_id": "P-1234-T01-IM6", "patient_id": "P-1234", "cancer_type": "NSCLC"}]
         results, mock_rq = self._call("P-1234-T", rows)
         sql = mock_rq.call_args[0][0]
-        assert "SAMPLE_ID_IMPACT" in sql
+        assert "sample_id LIKE :prefix" in sql
         assert results[0]["type"]  == "sample"
         assert results[0]["id"]    == "P-1234-T01-IM6"
 
@@ -110,21 +146,14 @@ class TestSearchSuggestionsRouting:
 def _base_row(**overrides):
     row = {
         "image_id":                1,
-        "PATIENT_ID_IMPACT":       "P-0001",
-        "SAMPLE_ID_IMPACT":        "P-0001-T01-IM6",
-        "SAMPLE_ID_PATH":          None,
-        "PART_NUMBER":             1,
-        "part_designator":         "A",
+        "PATIENT_ID":              "P-0001",
+        "sample_id":               "P-0001-T01-IM6",
+        "block_id":                "specimen/1-A1",
         "part_type":               "Primary",
         "part_description":        "Colon",
-        "BLOCK_NUMBER":            "1",
-        "BLOCK_LABEL":             "A1",
-        "barcode":                 "BC001",
-        "IS_HNE":                  "1",
-        "IS_IHC":                  "0",
+        "block_label":             "A1",
         "stain_name":              "H&E",
         "stain_group":             "H&E (Initial)",
-        "subspecialty":            "GI",
         "CANCER_TYPE":             "Colorectal Cancer",
         "CANCER_TYPE_DETAILED":    "Colon Adenocarcinoma",
         "ONCOTREE_CODE":           "COAD",
@@ -138,6 +167,8 @@ def _base_row(**overrides):
         "MSI_TYPE":                "MSS",
         "magnification":           20,
         "file_size_bytes":         1_234_567,
+        "slide_timepoint_days":    -20,
+        "slide_timepoint_source":  "Procedure date",
         "PATH_DX_SPEC_TITLE":      "Colon resection",
         "PATH_DX_SPEC_DESC":       None,
         "slide_path":              "s3://mskmind-bkt/reef-slides/1.svs",
@@ -147,7 +178,10 @@ def _base_row(**overrides):
 
 
 def _hierarchy(rows):
-    with patch("app.meta._run_query", return_value=rows):
+    with (
+        patch("app.meta._run_query", return_value=rows),
+        patch("app.meta.meta_store.get_patient_association_rows", return_value=rows),
+    ):
         return get_patient_hierarchy("P-0001", "wh-test")
 
 
@@ -165,12 +199,29 @@ class TestGetPatientHierarchy:
         assert s["sample_id"]    == "P-0001-T01-IM6"
         assert s["oncotree_code"] == "COAD"
         p = s["parts"][0]
+        assert p["path_dx_title"] == "Colon resection"
         b = p["blocks"][0]
         sl = b["slides"][0]
         assert sl["image_id"]       == "1"
         assert sl["is_hne"]         is True
         assert sl["is_ihc"]         is False
         assert sl["can_serve_tiles"] is True
+        assert sl["path_dx_title"] == "Colon resection"
+        assert sl["slide_timepoint_days"] == -20
+        assert sl["slide_timepoint_source"] == "Procedure date"
+
+    def test_missing_slide_timepoint_fields_stay_null(self):
+        result = _hierarchy(
+            [
+                _base_row(
+                    slide_timepoint_days=None,
+                    slide_timepoint_source=None,
+                )
+            ]
+        )
+        sl = result["samples"][0]["parts"][0]["blocks"][0]["slides"][0]
+        assert sl["slide_timepoint_days"] is None
+        assert sl["slide_timepoint_source"] is None
 
     def test_unservable_slide_has_false_can_serve(self):
         result = _hierarchy([_base_row(slide_path="")])
@@ -184,8 +235,8 @@ class TestGetPatientHierarchy:
 
     def test_two_samples_in_separate_buckets(self):
         rows = [
-            _base_row(SAMPLE_ID_IMPACT="P-0001-T01-IM6", image_id=1),
-            _base_row(SAMPLE_ID_IMPACT="P-0001-T02-IM6", image_id=2),
+            _base_row(sample_id="P-0001-T01-IM6", image_id=1),
+            _base_row(sample_id="P-0001-T02-IM6", image_id=2),
         ]
         result = _hierarchy(rows)
         sample_ids = {s["sample_id"] for s in result["samples"]}
@@ -199,10 +250,8 @@ class TestGetPatientHierarchy:
 
     def test_hne_sorts_before_ihc(self):
         rows = [
-            _base_row(image_id=2, IS_HNE="0", IS_IHC="1",
-                      stain_name="PD-L1", stain_group="IHC"),
-            _base_row(image_id=1, IS_HNE="1", IS_IHC="0",
-                      stain_name="H&E",   stain_group="H&E (Initial)"),
+            _base_row(image_id=2, stain_name="PD-L1", stain_group="IHC"),
+            _base_row(image_id=1, stain_name="H&E", stain_group="H&E (Initial)"),
         ]
         result = _hierarchy(rows)
         slides = result["samples"][0]["parts"][0]["blocks"][0]["slides"]
@@ -214,6 +263,95 @@ class TestGetPatientHierarchy:
         assert isinstance(result["samples"], list)
         assert isinstance(result["samples"][0]["parts"], list)
         assert isinstance(result["samples"][0]["parts"][0]["blocks"], list)
+
+    def test_duplicate_slide_associations_are_deduplicated(self):
+        rows = [
+            _base_row(
+                image_id=1,
+                match_level="BLOCK",
+                reference_sample_id="P-0001-T01-IM6",
+                reference_sequencing_date="2024-01-20",
+            ),
+            _base_row(
+                image_id=1,
+                match_level="BLOCK",
+                reference_sample_id="P-0001-T01-IM6",
+                reference_sequencing_date="2024-01-20",
+            ),
+        ]
+
+        result = _hierarchy(rows)
+
+        assert result["slide_associations"] == [
+            {
+                "image_id": "1",
+                "sample_id": "P-0001-T01-IM6",
+                "match_level": "BLOCK",
+                "specimen_key": "block::1::A1",
+                "part_number": "1",
+                "part_description": "Colon",
+                "block_number": "A1",
+                "block_label": "A1",
+                "slide_type": "H&E",
+                "stain_name": "H&E",
+                "procedure_date_days": -20,
+                "timepoint_source": "Procedure date",
+                "can_serve_tiles": True,
+            }
+        ]
+
+    def test_conflicting_slide_association_buckets_prefer_block_match(self):
+        association_rows = [
+            _base_row(
+                image_id=1,
+                sample_id="P-0001-T01-IM6",
+                match_level="PART",
+                block_id="specimen/1-A1",
+                block_label="A1",
+                reference_sample_id="P-0001-T01-IM6",
+                reference_sequencing_date="2024-01-20",
+            ),
+            _base_row(
+                image_id=1,
+                sample_id="P-0001-T01-IM6",
+                match_level="BLOCK",
+                block_id="specimen/1-A1",
+                block_label="A1",
+                reference_sample_id="P-0001-T01-IM6",
+                reference_sequencing_date="2024-01-20",
+            ),
+        ]
+
+        with patch("app.meta._run_query", return_value=[]):
+            with patch(
+                "app.meta.meta_store.get_patient_association_rows",
+                return_value=association_rows,
+            ):
+                result = get_patient_hierarchy("P-0001", "wh-test")
+
+        assert result is not None
+        assert result["slide_associations"] == [
+            {
+                "image_id": "1",
+                "sample_id": "P-0001-T01-IM6",
+                "match_level": "BLOCK",
+                "specimen_key": "block::1::A1",
+                "part_number": "1",
+                "part_description": "Colon",
+                "block_number": "A1",
+                "block_label": "A1",
+                "slide_type": "H&E",
+                "stain_name": "H&E",
+                "procedure_date_days": -20,
+                "timepoint_source": "Procedure date",
+                "can_serve_tiles": True,
+            }
+        ]
+        assert len(result["samples"]) == 1
+        assert result["samples"][0]["sample_id"] == "P-0001-T01-IM6"
+        assert len(result["samples"][0]["parts"]) == 1
+        assert len(result["samples"][0]["parts"][0]["blocks"]) == 1
+        assert len(result["samples"][0]["parts"][0]["blocks"][0]["slides"]) == 1
 
 
 # ---------------------------------------------------------------------------
@@ -243,7 +381,7 @@ class TestGetSlidePath:
 # get_sample_slide_summary
 # ---------------------------------------------------------------------------
 
-from app.meta import get_sample_slide_summary  # noqa: E402
+from app.meta import get_live_sample_slide_summary, get_sample_slide_summary  # noqa: E402
 
 
 class TestGetSampleSlideSummary:
@@ -276,6 +414,8 @@ class TestGetSampleSlideSummary:
         sample_id="P-001-T01",
         patient_id="P-001",
         servable_slide_count=3,
+        non_servable_hne_slide_count=0,
+        non_servable_ihc_slide_count=0,
         has_hne=1,
         has_ihc=0,
         stain_types="H&E",
@@ -284,6 +424,8 @@ class TestGetSampleSlideSummary:
             "sample_id":            sample_id,
             "patient_id":           patient_id,
             "servable_slide_count": servable_slide_count,
+            "non_servable_hne_slide_count": non_servable_hne_slide_count,
+            "non_servable_ihc_slide_count": non_servable_ihc_slide_count,
             "has_hne":              has_hne,
             "has_ihc":              has_ihc,
             "stain_types":          stain_types,
@@ -295,6 +437,7 @@ class TestGetSampleSlideSummary:
         row = result[0]
         assert set(row.keys()) == {
             "sample_id", "patient_id", "servable_slide_count",
+            "non_servable_hne_slide_count", "non_servable_ihc_slide_count",
             "has_hne", "has_ihc", "stain_types",
         }
 
@@ -310,6 +453,19 @@ class TestGetSampleSlideSummary:
     def test_has_ihc_is_int(self):
         result, _ = self._call(["P-001-T01"], rows=[self._sample_row(has_ihc="1")])
         assert result[0]["has_ihc"] == 1
+
+    def test_non_servable_counts_are_ints(self):
+        result, _ = self._call(
+            ["P-001-T01"],
+            rows=[
+                self._sample_row(
+                    non_servable_hne_slide_count="2",
+                    non_servable_ihc_slide_count="5",
+                )
+            ],
+        )
+        assert result[0]["non_servable_hne_slide_count"] == 2
+        assert result[0]["non_servable_ihc_slide_count"] == 5
 
     def test_stain_types_none_becomes_empty_string(self):
         result, _ = self._call(["P-001-T01"], rows=[self._sample_row(stain_types=None)])
@@ -379,3 +535,172 @@ class TestGetSampleSlideSummary:
             rows=[self._sample_row(has_ihc=None)],
         )
         assert result[0]["has_ihc"] == 0
+
+    def test_null_non_servable_counts_become_zero(self):
+        result, _ = self._call(
+            ["P-001-T01"],
+            rows=[
+                self._sample_row(
+                    non_servable_hne_slide_count=None,
+                    non_servable_ihc_slide_count=None,
+                )
+            ],
+        )
+        assert result[0]["non_servable_hne_slide_count"] == 0
+        assert result[0]["non_servable_ihc_slide_count"] == 0
+
+
+def test_live_summary_uses_patient_slide_universe():
+    with patch("app.meta._run_query", return_value=[]) as mock_rq:
+        get_live_sample_slide_summary(["P-001-T01"], warehouse_id="wh-test")
+
+    sql = mock_rq.call_args[0][0]
+    assert "INNER JOIN patient_map p ON c.mrn = p.mrn" in sql
+    assert "viewable_patient_summary AS" in sql
+    assert f"FROM {meta_store._TABLE} d" in sql
+    assert "INNER JOIN servable_inventory s ON d.image_id = s.image_id" in sql
+    assert "non_viewable_patient_summary AS" in sql
+    assert "GROUP BY d.patient_id" in sql
+    assert "m.image_id" not in sql
+
+
+class TestPatientAssociationRows:
+    def test_prefers_canonical_association_table(self):
+        with patch("app.meta_store.run_query", return_value=[{"image_id": "1"}]) as mock_rq:
+            rows = meta_store.get_patient_association_rows("P-0001", "wh-test")
+
+        assert rows == [{"image_id": "1"}]
+        sql = mock_rq.call_args_list[0].args[0]
+        assert meta_store._CANONICAL_ASSOCIATION_TABLE in sql
+
+    def test_missing_canonical_table_falls_back_to_legacy_query(self):
+        with patch(
+            "app.meta_store.run_query",
+            side_effect=[
+                RuntimeError(
+                    "TABLE_OR_VIEW_NOT_FOUND: cdsi_prod.pathology_data_mining.canonical_slide_associations does not exist"
+                ),
+                [{"image_id": "1"}],
+            ],
+        ) as mock_rq:
+            with patch.object(
+                meta_store.settings, "allow_legacy_association_fallback", True
+            ):
+                rows = meta_store.get_patient_association_rows("P-0001", "wh-test")
+
+        assert rows == [{"image_id": "1"}]
+        assert len(mock_rq.call_args_list) == 2
+        canonical_sql = mock_rq.call_args_list[0].args[0]
+        legacy_sql = mock_rq.call_args_list[1].args[0]
+        assert meta_store._CANONICAL_ASSOCIATION_TABLE in canonical_sql
+        assert "matched_associations_raw AS" in legacy_sql
+
+    def test_non_missing_canonical_error_does_not_fall_back(self):
+        with patch(
+            "app.meta_store.run_query",
+            side_effect=RuntimeError("Databricks query timed out"),
+        ):
+            with pytest.raises(RuntimeError, match="timed out"):
+                meta_store.get_patient_association_rows("P-0001", "wh-test")
+
+    def test_missing_canonical_table_logs_fallback(self, caplog):
+        with patch(
+            "app.meta_store.run_query",
+            side_effect=[
+                RuntimeError(
+                    "TABLE_OR_VIEW_NOT_FOUND: cdsi_prod.pathology_data_mining.canonical_slide_associations does not exist"
+                ),
+                [{"image_id": "1"}],
+            ],
+        ):
+            with patch.object(
+                meta_store.settings, "allow_legacy_association_fallback", True
+            ):
+                with caplog.at_level("WARNING"):
+                    rows = meta_store.get_patient_association_rows("P-0001", "wh-test")
+
+        assert rows == [{"image_id": "1"}]
+        assert "Falling back to legacy association SQL for patient P-0001" in caplog.text
+
+    def test_explicit_legacy_mode_skips_canonical_query(self):
+        with patch("app.meta_store.run_query", return_value=[{"image_id": "1"}]) as mock_rq:
+            rows = meta_store.get_patient_association_rows(
+                "P-0001",
+                "wh-test",
+                mode="legacy",
+            )
+
+        assert rows == [{"image_id": "1"}]
+        sql = mock_rq.call_args_list[0].args[0]
+        assert "matched_associations_raw AS" in sql
+
+    def test_explicit_canonical_mode_skips_fallback(self):
+        with patch("app.meta_store.run_query", return_value=[{"image_id": "1"}]) as mock_rq:
+            rows = meta_store.get_patient_association_rows(
+                "P-0001",
+                "wh-test",
+                mode="canonical",
+            )
+
+        assert rows == [{"image_id": "1"}]
+        sql = mock_rq.call_args_list[0].args[0]
+        assert meta_store._CANONICAL_ASSOCIATION_TABLE in sql
+
+    def test_explicit_canonical_mode_logs_canonical_query(self, caplog):
+        with patch("app.meta_store.run_query", return_value=[{"image_id": "1"}]):
+            with caplog.at_level("INFO"):
+                rows = meta_store.get_patient_association_rows(
+                    "P-0001",
+                    "wh-test",
+                    mode="canonical",
+                )
+
+        assert rows == [{"image_id": "1"}]
+        assert "Querying canonical association table for patient P-0001" in caplog.text
+
+    def test_canonical_only_patient_still_builds_hierarchy(self):
+        association_rows = [
+            {
+                "image_id": "42",
+                "sample_id": None,
+                "match_level": "UNMATCHED",
+                "block_id": "specimen/2-B1",
+                "block_label": "B1",
+                "part_type": "Biopsy",
+                "part_description": "Liver",
+                "path_dx_title": "Liver biopsy",
+                "stain_name": "H&E",
+                "stain_group": "H&E (Initial)",
+                "CANCER_TYPE": None,
+                "CANCER_TYPE_DETAILED": None,
+                "ONCOTREE_CODE": None,
+                "PRIMARY_SITE": None,
+                "SAMPLE_TYPE": None,
+                "METASTATIC_SITE": None,
+                "TUMOR_PURITY": None,
+                "ONCOGENIC_MUTATIONS": None,
+                "NUM_ONCOGENIC_MUTATIONS": None,
+                "CVR_TMB_SCORE": None,
+                "MSI_TYPE": None,
+                "magnification": 20,
+                "file_size_bytes": 1234,
+                "slide_path": "s3://mskmind-bkt/reef-slides/42.svs",
+                "reference_sample_id": "P-0001-T01-IM6",
+                "reference_sequencing_date": "2024-01-20",
+                "slide_timepoint_days": -12,
+                "slide_timepoint_source": "Procedure date relative to tumor sequencing",
+                "procedure_date": "2024-01-08",
+            }
+        ]
+
+        with patch("app.meta._run_query", return_value=[]):
+            with patch(
+                "app.meta_store.get_patient_association_rows",
+                return_value=association_rows,
+            ):
+                result = get_patient_hierarchy("P-0001", "wh-test")
+
+        assert result is not None
+        assert result["patient_id"] == "P-0001"
+        assert result["samples"][0]["sample_id"] == "UNMATCHED"
+        assert result["slide_associations"][0]["match_level"] == "UNMATCHED"

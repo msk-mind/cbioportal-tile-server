@@ -37,9 +37,15 @@ def _meta_key(slide_id: str) -> str:
     return f"meta:{slide_id}"
 
 
+def _redis_configured() -> bool:
+    return bool(settings.redis_url) and settings.redis_url.startswith(
+        ("redis://", "rediss://", "unix://")
+    )
+
+
 async def init_cache() -> None:
     global _redis
-    if not settings.redis_url or not settings.redis_url.startswith(("redis://", "rediss://", "unix://")):
+    if not _redis_configured():
         return  # no cache configured — all get/set calls are no-ops
     _redis = aioredis.from_url(
         settings.redis_url,
@@ -86,6 +92,14 @@ def _from_json(raw: bytes | None) -> object | None:
     return json.loads(raw) if raw else None
 
 
+async def _redis_get_json(key: str) -> object | None:
+    return _from_json(await _redis_get(key))
+
+
+async def _redis_set_json(key: str, data: object, ttl: int = 0) -> None:
+    await _redis_set(key, json.dumps(data, default=str), ttl=ttl)
+
+
 # ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
@@ -113,17 +127,13 @@ async def set_thumbnail(slide_id: str, width: int, height: int, data: bytes) -> 
 async def get_patient(patient_id: str) -> dict | None:
     if not settings.patient_cache_ttl:
         return None
-    return _from_json(await _redis_get(_patient_key(patient_id)))
+    return await _redis_get_json(_patient_key(patient_id))
 
 
 async def set_patient(patient_id: str, data: dict) -> None:
     if not settings.patient_cache_ttl:
         return
-    await _redis_set(
-        _patient_key(patient_id),
-        json.dumps(data, default=str),
-        ttl=settings.patient_cache_ttl,
-    )
+    await _redis_set_json(_patient_key(patient_id), data, ttl=settings.patient_cache_ttl)
 
 
 # ---------------------------------------------------------------------------
@@ -131,11 +141,11 @@ async def set_patient(patient_id: str, data: dict) -> None:
 # ---------------------------------------------------------------------------
 
 async def get_raw(key: str) -> object | None:
-    return _from_json(await _redis_get(key))
+    return await _redis_get_json(key)
 
 
 async def set_raw(key: str, data: object, ttl: int = 300) -> None:
-    await _redis_set(key, json.dumps(data, default=str), ttl=ttl)
+    await _redis_set_json(key, data, ttl=ttl)
 
 
 # ---------------------------------------------------------------------------
@@ -143,8 +153,8 @@ async def set_raw(key: str, data: object, ttl: int = 300) -> None:
 # ---------------------------------------------------------------------------
 
 async def get_metadata(slide_id: str) -> dict | None:
-    return _from_json(await _redis_get(_meta_key(slide_id)))
+    return await _redis_get_json(_meta_key(slide_id))
 
 
 async def set_metadata(slide_id: str, data: dict) -> None:
-    await _redis_set(_meta_key(slide_id), json.dumps(data, default=str))
+    await _redis_set_json(_meta_key(slide_id), data)
