@@ -59,7 +59,7 @@ class Settings:
         default_factory=lambda: _env_bool("USE_CANONICAL_ASSOCIATION_TABLE", True)
     )
     allow_legacy_association_fallback: bool = field(
-        default_factory=lambda: _env_bool("ALLOW_LEGACY_ASSOCIATION_FALLBACK", True)
+        default_factory=lambda: _env_bool("ALLOW_LEGACY_ASSOCIATION_FALLBACK", False)
     )
     patient_cache_ttl: int = field(default_factory=lambda: _env_int("PATIENT_CACHE_TTL", 86_400))
     blockcache_path: str = field(default_factory=lambda: _env_str("BLOCKCACHE_PATH", ""))

@@ -158,6 +158,21 @@ def _association_identity(
     )
 
 
+def _canonicalize_association_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Keep the strongest association bucket for each sample/slide pair."""
+    selected: dict[tuple[str, str | None], dict[str, Any]] = {}
+    rank = {"UNMATCHED": 0, "PART": 1, "BLOCK": 2}
+    for row in rows:
+        key = (str(row.get("image_id")), row.get("sample_id"))
+        current = selected.get(key)
+        level = (row.get("match_level") or "UNMATCHED").upper()
+        if current is None or rank.get(level, 0) > rank.get(
+            (current.get("match_level") or "UNMATCHED").upper(), 0
+        ):
+            selected[key] = row
+    return list(selected.values())
+
+
 def _assemble_slide_associations(rows: list[dict[str, Any]]) -> tuple[list[dict], str | None, str | None]:
     associations: list[dict] = []
     reference_sample_id: str | None = None
@@ -410,14 +425,17 @@ def get_patient_hierarchy(
         if study_id
         else _run_query(meta_store.PATIENT_SQL, warehouse_id, [_param("patient_id", patient_id)])
     )
-    if rows is None:
-        return None
-    if not rows:
-        return None
-    hierarchy = _assemble_patient_hierarchy(rows, patient_id)
     association_rows = meta_store.get_patient_association_rows(
         patient_id,
         warehouse_id,
+    )
+    association_rows = _canonicalize_association_rows(association_rows)
+    if rows is None or (not rows and not association_rows):
+        return None
+    hierarchy = (
+        _assemble_patient_hierarchy(rows, patient_id)
+        if rows
+        else {"patient_id": patient_id, "samples": []}
     )
     _merge_association_rows_into_hierarchy(hierarchy, association_rows)
     (
