@@ -23,13 +23,18 @@ services:
       DATABRICKS_TOKEN: ${DATABRICKS_TOKEN}
       DATABRICKS_WAREHOUSE_ID: ${DATABRICKS_WAREHOUSE_ID:-0b49b7d78734ad5c}
 
+      # ── WSI capability authentication ────────────────────────────────────
+      WSI_AUTH_SECRET: ${WSI_AUTH_SECRET:?WSI_AUTH_SECRET must be set}
+      WSI_AUTH_AUDIENCE: ${WSI_AUTH_AUDIENCE:-cbioportal-wsi}
+      WSI_AUTH_REQUIRED: ${WSI_AUTH_REQUIRED:-true}
+
       # ── Tile settings ─────────────────────────────────────────────────────
       TILE_SIZE: ${TILE_SIZE:-256}
       JPEG_QUALITY: ${JPEG_QUALITY:-85}
 
       # ── Redis cache ───────────────────────────────────────────────────────
-      REDIS_URL: redis://:${REDIS_PASSWORD:-}@redis:6379
-      TILE_CACHE_TTL: 0        # 0 = no expiry (tiles are immutable)
+      REDIS_URL: redis://:${REDIS_PASSWORD:?REDIS_PASSWORD must be set}@redis:6379
+      TILE_CACHE_TTL: ${TILE_CACHE_TTL:-86400}
       PATIENT_CACHE_TTL: ${PATIENT_CACHE_TTL:-300}   # 5 min for dev; 86400 in prod
 
       # ── CORS — add the viewer origin so the browser can reach tile APIs ───

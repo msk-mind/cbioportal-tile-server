@@ -1,4 +1,4 @@
-# cbioportal-slide-viewer — Operations Runbook
+# cbioportal-tile-server — Operations Runbook
 
 ## Overview
 
@@ -24,13 +24,16 @@ Browser
 
 ### Prerequisites
 
-1. **Kubernetes secret** — must exist before ArgoCD first sync:
+1. **Kubernetes secret** — must exist before ArgoCD first sync. Use the names
+   consumed by the application; do not put credentials in manifests:
    ```bash
    kubectl create secret generic slide-viewer-secrets \
-     --from-literal=REEF_AWS_KEY=<ecs-access-key> \
-     --from-literal=REEF_AWS_SECRET=<ecs-secret-key> \
+     --from-literal=AWS_ACCESS_KEY_ID=<ecs-access-key> \
+     --from-literal=AWS_SECRET_ACCESS_KEY=<ecs-secret-key> \
      --from-literal=DATABRICKS_HOST=https://msk-mode-prod.cloud.databricks.com \
-     --from-literal=DATABRICKS_TOKEN=<pat>
+     --from-literal=DATABRICKS_TOKEN=<pat> \
+     --from-literal=WSI_AUTH_SECRET=<at-least-32-byte-secret> \
+     --from-literal=REDIS_PASSWORD=<strong-random-password>
    ```
 
 2. **GitHub Actions secret** — for GitOps image-tag pinning:
@@ -58,6 +61,30 @@ Set `CORS_ORIGINS` to the internal MSK cBioPortal hosts that embed the viewer:
 CORS_ORIGINS: "https://cbioportal.mskcc.org,https://triage.cbioportal.mskcc.org"
 ```
 
+### WSI capability authentication
+
+Every route except `/health` and `/wsi/health` requires:
+
+```text
+Authorization: Bearer <short-lived-cbioportal-wsi-jwt>
+```
+
+The issuer and tile server must share `WSI_AUTH_SECRET`. Tokens must use
+HS256, audience `WSI_AUTH_AUDIENCE` (default `cbioportal-wsi`), scope
+`wsi:read`, a non-empty subject, and valid `iat`/`exp` claims. Keep the secret
+at least 32 bytes and rotate it by updating the Kubernetes secret and restarting
+the deployment. Set `WSI_AUTH_REQUIRED=true` in production; disabling it is
+only appropriate for isolated local development.
+
+The service deliberately does not use public caching for metadata. Tile and
+thumbnail responses use private browser/proxy caching only; patient metadata,
+slide metadata, and search responses use `private, no-store`. Never add a
+shared/public cache in front of these endpoints.
+
+Redis must be password-protected in shared environments. Set `REDIS_PASSWORD`
+and ensure `REDIS_URL` includes the same credential. Redis contains cached
+patient metadata as well as image data, so it is not a public service.
+
 ---
 
 ## CI/CD
@@ -82,6 +109,9 @@ python tools/generate_wsi_timepoint_clinical_attrs.py \
 python tools/generate_resource_patient.py \
     --study-dir /path/to/private/automation_tool_datasets/<study_id> \
     --base-url https://slides.cbioportal.org
+
+# Preview all study changes without deleting or writing study files:
+bash tools/migrate_all_studies.sh --dry-run
 
 # Then remove legacy DSA resource files if present:
 rm -f <study_dir>/data_resource_sample.txt
@@ -110,11 +140,12 @@ bash tools/migrate_all_studies.sh
 # Liveness (pods should return 200):
 curl https://slides.cbioportal.org/health
 
-# Patient metadata (requires a valid PATIENT_ID):
-curl "https://slides.cbioportal.org/patient/P-0000001" | jq .patient_id
+# Patient metadata (requires a short-lived capability token):
+curl -H "Authorization: Bearer $WSI_TOKEN" \
+  "https://slides.cbioportal.org/patient/P-0000001" | jq .patient_id
 
-# Tile endpoint:
-curl -o /dev/null -w "%{http_code}" \
+# Tile endpoint (also requires the capability token):
+curl -H "Authorization: Bearer $WSI_TOKEN" -o /dev/null -w "%{http_code}" \
   "https://slides.cbioportal.org/tiles/<slide_id>/zxy/0/0/0"
 ```
 
@@ -144,7 +175,7 @@ curl -o /dev/null -w "%{http_code}" \
 - The ECS bucket key may have moved — check `slide_inventory.path`.
 
 ### Redis OOM
-- Default `maxmemory=8gb` with `allkeys-lru` — Redis will evict old tiles automatically.
+- Redis uses `allkeys-lru` and evicts old tiles automatically when it reaches its configured `maxmemory` (the local Compose default is 1 GB).
 - If eviction rate is very high, consider increasing `SLIDE_VIEWER_REDIS_MAXMEMORY` in `redis.yaml`.
 
 ### Ingress rate-limit (HTTP 429)
@@ -158,10 +189,12 @@ curl -o /dev/null -w "%{http_code}" \
 ### ECS credentials
 ```bash
 kubectl create secret generic slide-viewer-secrets \
-  --from-literal=REEF_AWS_KEY=<new-key> \
-  --from-literal=REEF_AWS_SECRET=<new-secret> \
+  --from-literal=AWS_ACCESS_KEY_ID=<new-key> \
+  --from-literal=AWS_SECRET_ACCESS_KEY=<new-secret> \
   --from-literal=DATABRICKS_HOST=https://msk-mode-prod.cloud.databricks.com \
   --from-literal=DATABRICKS_TOKEN=<pat> \
+  --from-literal=WSI_AUTH_SECRET=<at-least-32-byte-secret> \
+  --from-literal=REDIS_PASSWORD=<strong-random-password> \
   --dry-run=client -o yaml | kubectl apply -f -
 kubectl rollout restart deployment/slide-viewer
 ```
@@ -170,6 +203,14 @@ kubectl rollout restart deployment/slide-viewer
 1. Generate a new PAT in Databricks UI (Settings → Developer → Access Tokens).
 2. Update the secret as above with the new `DATABRICKS_TOKEN`.
 3. Restart the deployment.
+
+### WSI capability and Redis secrets
+
+Rotate `WSI_AUTH_SECRET` only in coordination with the cBioPortal capability
+issuer: tokens signed with the previous secret become invalid after restart.
+Rotate `REDIS_PASSWORD` together with the application `REDIS_URL` so cache
+connectivity is restored. Neither secret should be printed in logs or committed
+to the repository.
 
 ---
 
