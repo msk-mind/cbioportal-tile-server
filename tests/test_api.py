@@ -10,6 +10,7 @@ from PIL import Image
 import app.cache as cache_module
 import app.main as main_module
 import app.meta as meta_module
+from app.config import settings
 from app.tiles import TILE_SIZE
 from tests.conftest import make_mock_slide
 
@@ -91,6 +92,12 @@ class TestHealth:
         resp = api_client.get("/wsi/health")
         assert resp.status_code == 200
 
+    def test_wsi_data_requires_capability(self, api_client, monkeypatch):
+        monkeypatch.setattr(settings, "wsi_auth_required", True)
+        monkeypatch.setattr(settings, "wsi_auth_secret", "s" * 32)
+        resp = api_client.get("/wsi/patient/P-1")
+        assert resp.status_code == 401
+
 
 # ---------------------------------------------------------------------------
 # /tiles/{slide_id}/metadata
@@ -134,9 +141,11 @@ class TestTileRoute:
         assert resp.headers["content-type"] == "image/jpeg"
         assert resp.content[:2] == b"\xff\xd8"
 
-    def test_cache_control_immutable(self, api_client):
+    def test_cache_control_is_private(self, api_client):
         resp = api_client.get("/tiles/1492807/zxy/0/0/0")
-        assert "immutable" in resp.headers.get("cache-control", "")
+        cache_control = resp.headers.get("cache-control", "")
+        assert "private" in cache_control
+        assert "public" not in cache_control
 
     def test_out_of_range_z_returns_404(self, api_client):
         resp = api_client.get("/tiles/1492807/zxy/99/0/0")

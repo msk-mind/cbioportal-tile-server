@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
 # tools/migrate_all_studies.sh
 #
-# Batch-generate cBioPortal PATIENT-level resource files for every MSK IMPACT
-# study in the private repo.  Runs generate_resource_patient.py sequentially
-# (one Databricks query per study) and removes legacy DSA sample-resource files.
+# Batch-generate cBioPortal pathology timeline and PATIENT-level resource files
+# for every MSK IMPACT study in the private repo. Runs the WSI cleanup passes,
+# regenerates PATHOLOGY SLIDES timeline events from the canonical shared
+# pathology snapshot, and then refreshes PATIENT-level slide resources.
 #
 # Usage (from repo root):
 #   bash tools/migrate_all_studies.sh [--dry-run] [--private-dir <path>]
@@ -69,6 +70,15 @@ for study in "${STUDIES[@]}"; do
   echo ">>> $study  $(date +%H:%M:%S)" | tee -a "$LOG_FILE"
 
   set +e
+  python3 "$REPO_ROOT/tools/generate_wsi_clinical_attrs.py" \
+    --study-dir "$dir" 2>&1 | tee -a "$LOG_FILE"
+  cleanup_rc=${PIPESTATUS[0]}
+  python3 "$REPO_ROOT/tools/generate_wsi_timepoint_clinical_attrs.py" \
+    --study-dir "$dir" 2>&1 | tee -a "$LOG_FILE"
+  timepoint_cleanup_rc=${PIPESTATUS[0]}
+  python3 "$REPO_ROOT/tools/generate_pathology_timeline_files.py" \
+    --study-dir "$dir" 2>&1 | tee -a "$LOG_FILE"
+  timeline_rc=${PIPESTATUS[0]}
   python3 "$REPO_ROOT/tools/generate_resource_patient.py" \
     --study-dir "$dir" \
     --base-url "$BASE_URL" \
@@ -76,7 +86,7 @@ for study in "${STUDIES[@]}"; do
   rc=${PIPESTATUS[0]}
   set -e
 
-  if [ $rc -eq 0 ]; then
+  if [ $cleanup_rc -eq 0 ] && [ $timepoint_cleanup_rc -eq 0 ] && [ $timeline_rc -eq 0 ] && [ $rc -eq 0 ]; then
     PASS=$((PASS+1))
     if [ -z "$DRY_RUN" ]; then
       for f in data_resource_sample.txt meta_resource_sample.txt; do
@@ -87,7 +97,7 @@ for study in "${STUDIES[@]}"; do
       done
     fi
   else
-    echo "  FAILED (exit $rc)" | tee -a "$LOG_FILE"
+    echo "  FAILED (cleanup=$cleanup_rc timepoint_cleanup=$timepoint_cleanup_rc timeline=$timeline_rc resource=$rc)" | tee -a "$LOG_FILE"
     FAIL=$((FAIL+1))
   fi
   echo "" | tee -a "$LOG_FILE"

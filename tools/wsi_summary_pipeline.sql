@@ -1,45 +1,91 @@
 -- WSI Slide Summary Pipeline
--- Nightly Databricks Job: computes per-sample slide availability stats
--- and writes them to sample_wsi_summary for fast query by tools and the tile server.
+-- Nightly Databricks Job: derives the legacy summary table from the canonical
+-- shared pathology association snapshot.
 --
 -- Output table: cdsi_prod.pathology_data_mining.sample_wsi_summary
 -- Job is managed via databricks.yml (Databricks Asset Bundle).
---
--- Usage (manual run):
---   databricks bundle run wsi-summary-pipeline
 
 CREATE OR REPLACE TABLE cdsi_prod.pathology_data_mining.sample_wsi_summary AS
-SELECT
-    d.sample_id                                      AS sample_id,
-    d.PATIENT_ID                                     AS patient_id,
-    COUNT(DISTINCT CASE
-        WHEN s.path LIKE 's3://%'
-         AND (
-            LOWER(COALESCE(d.stain_group, d.stain_name, '')) LIKE '%h&e%'
-            OR LOWER(COALESCE(d.stain_group, '')) LIKE '%ihc%'
-         )
-        THEN d.image_id
-        ELSE NULL
-    END)                                             AS servable_slide_count,
-    MAX(CASE WHEN LOWER(COALESCE(d.stain_group, d.stain_name, '')) LIKE '%h&e%' AND s.path LIKE 's3://%' THEN 1 ELSE 0 END) AS has_hne,
-    MAX(CASE WHEN LOWER(COALESCE(d.stain_group, '')) LIKE '%ihc%' AND s.path LIKE 's3://%' THEN 1 ELSE 0 END) AS has_ihc,
-    ARRAY_JOIN(
-        ARRAY_SORT(
-            COLLECT_SET(
-                CASE
-                    WHEN s.path LIKE 's3://%'
-                     AND (
-                        LOWER(COALESCE(d.stain_group, d.stain_name, '')) LIKE '%h&e%'
-                        OR LOWER(COALESCE(d.stain_group, '')) LIKE '%ihc%'
-                     )
-                    THEN d.stain_name
-                    ELSE NULL
-                END
-            )
-        ),
-        ';'
-    )                                                AS stain_types
-FROM cdsi_eng_phi.pdm_base_tables_dev.impact_block_matched_slides_v1 d
-LEFT JOIN cdsi_eng_phi.pdm_base_tables.slide_inventory s ON d.image_id = s.image_id
-WHERE d.sample_id IS NOT NULL
-GROUP BY d.sample_id, d.PATIENT_ID
+WITH canonical_rows AS (
+    SELECT DISTINCT
+        association_version,
+        updated_at,
+        sample_id,
+        patient_id,
+        image_id,
+        slide_path,
+        stain_group,
+        stain_name
+    FROM cdsi_prod.pathology_data_mining.canonical_slide_associations
+    WHERE sample_id IS NOT NULL
+),
+sample_summary AS (
+    SELECT
+        sample_id,
+        patient_id,
+        MAX(association_version) AS association_version,
+        MAX(updated_at) AS updated_at,
+        COUNT(
+            DISTINCT CASE
+                WHEN slide_path LIKE 's3://%'
+                 AND (
+                    LOWER(COALESCE(stain_group, stain_name, '')) LIKE '%h&e%'
+                    OR LOWER(COALESCE(stain_group, '')) LIKE '%ihc%'
+                 )
+                THEN image_id
+                ELSE NULL
+            END
+        ) AS servable_slide_count,
+        COUNT(
+            DISTINCT CASE
+                WHEN COALESCE(slide_path, '') NOT LIKE 's3://%'
+                 AND LOWER(COALESCE(stain_group, stain_name, '')) LIKE '%h&e%'
+                THEN image_id
+                ELSE NULL
+            END
+        ) AS non_servable_hne_slide_count,
+        COUNT(
+            DISTINCT CASE
+                WHEN COALESCE(slide_path, '') NOT LIKE 's3://%'
+                 AND LOWER(COALESCE(stain_group, '')) LIKE '%ihc%'
+                THEN image_id
+                ELSE NULL
+            END
+        ) AS non_servable_ihc_slide_count,
+        MAX(
+            CASE
+                WHEN slide_path LIKE 's3://%'
+                 AND LOWER(COALESCE(stain_group, stain_name, '')) LIKE '%h&e%'
+                THEN 1
+                ELSE 0
+            END
+        ) AS has_hne,
+        MAX(
+            CASE
+                WHEN slide_path LIKE 's3://%'
+                 AND LOWER(COALESCE(stain_group, '')) LIKE '%ihc%'
+                THEN 1
+                ELSE 0
+            END
+        ) AS has_ihc,
+        ARRAY_JOIN(
+            ARRAY_SORT(
+                COLLECT_SET(
+                    CASE
+                        WHEN slide_path LIKE 's3://%'
+                         AND (
+                            LOWER(COALESCE(stain_group, stain_name, '')) LIKE '%h&e%'
+                            OR LOWER(COALESCE(stain_group, '')) LIKE '%ihc%'
+                         )
+                        THEN stain_name
+                        ELSE NULL
+                    END
+                )
+            ),
+            ';'
+        ) AS stain_types
+    FROM canonical_rows
+    GROUP BY sample_id, patient_id
+)
+SELECT *
+FROM sample_summary

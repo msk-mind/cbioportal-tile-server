@@ -75,6 +75,10 @@ When a cBioPortal study dataset is updated or a new IMPACT study is added, run t
 
 ```bash
 # From the cbioportal-slide-viewer repo root:
+python tools/generate_wsi_clinical_attrs.py \
+    --study-dir /path/to/private/automation_tool_datasets/<study_id>
+python tools/generate_wsi_timepoint_clinical_attrs.py \
+    --study-dir /path/to/private/automation_tool_datasets/<study_id>
 python tools/generate_resource_patient.py \
     --study-dir /path/to/private/automation_tool_datasets/<study_id> \
     --base-url https://slides.cbioportal.org
@@ -86,8 +90,10 @@ rm -f <study_dir>/meta_resource_sample.txt
 
 The tool:
 - Reads patient IDs from `data_clinical_sample.txt`
-- Queries Databricks (`slide_inventory` JOIN) to find patients with servable slides
+- Removes legacy WSI sample and timepoint clinical attributes from `data_clinical_sample.txt`
+- Queries the canonical Databricks association table to find patients with pathology rows
 - Writes `data_resource_patient.txt`, `meta_resource_patient.txt`, `data_resource_definition.txt`, `meta_resource_definition.txt`
+- Writes `wsi_snapshot_manifest.json` with the canonical snapshot metadata used for the study refresh
 
 After running, open a PR in the `private` repo and reload the study in cBioPortal.
 

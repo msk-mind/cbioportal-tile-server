@@ -36,6 +36,11 @@ def _env_csv(name: str, default: str) -> list[str]:
 
 @dataclass
 class Settings:
+    # WSI request authentication
+    wsi_auth_secret: str = field(default_factory=lambda: _env_str("WSI_AUTH_SECRET"))
+    wsi_auth_audience: str = field(default_factory=lambda: _env_str("WSI_AUTH_AUDIENCE", "cbioportal-wsi"))
+    wsi_auth_required: bool = field(default_factory=lambda: _env_bool("WSI_AUTH_REQUIRED", True))
+
     # S3 / Dell ECS connection
     aws_endpoint_url: str = field(default_factory=lambda: _env_str("AWS_ENDPOINT_URL", _aws_profile("endpoint_url", "")))
     aws_access_key_id: str = field(default_factory=lambda: _env_str("AWS_ACCESS_KEY_ID", _aws_profile("aws_access_key_id")))
@@ -47,15 +52,21 @@ class Settings:
 
     # Redis tile cache
     redis_url: str = field(default_factory=lambda: _env_str("REDIS_URL", "redis://redis:6379"))
-    tile_cache_ttl: int = field(default_factory=lambda: _env_int("TILE_CACHE_TTL", 0))
+    tile_cache_ttl: int = field(default_factory=lambda: _env_int("TILE_CACHE_TTL", 86_400))
 
     # Slide cache / workers
-    max_open_slides: int = field(default_factory=lambda: _env_int("MAX_OPEN_SLIDES", 256))
+    max_open_slides: int = field(default_factory=lambda: _env_int("MAX_OPEN_SLIDES", 64))
     n_workers: int = field(default_factory=lambda: _env_int("N_WORKERS", 4))
 
     # Databricks SQL
     databricks_warehouse_id: str = field(
         default_factory=lambda: _env_str("DATABRICKS_WAREHOUSE_ID", _DEFAULT_WAREHOUSE_ID)
+    )
+    use_canonical_association_table: bool = field(
+        default_factory=lambda: _env_bool("USE_CANONICAL_ASSOCIATION_TABLE", True)
+    )
+    allow_legacy_association_fallback: bool = field(
+        default_factory=lambda: _env_bool("ALLOW_LEGACY_ASSOCIATION_FALLBACK", False)
     )
 
     # Metadata cache
