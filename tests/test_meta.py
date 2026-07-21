@@ -657,7 +657,6 @@ class TestPatientAssociationRows:
 
         assert rows == [{"image_id": "1"}]
         assert "Querying canonical association table for patient P-0001" in caplog.text
-
     def test_canonical_only_patient_still_builds_hierarchy(self):
         association_rows = [
             {

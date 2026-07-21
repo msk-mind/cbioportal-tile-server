@@ -21,11 +21,8 @@ Completed in the tile server:
   back to the legacy inline SQL only when the canonical table is missing.
 - Regression coverage in `tests/test_meta.py` for duplicate
   `slide_associations`.
-- A study-file generator now exists at
-  `tools/generate_pathology_timeline_files.py` to emit canonical
-  `PATHOLOGY SLIDES` timeline events from the shared Databricks snapshot.
 
-Verified on July 19, 2026:
+Verified on July 17, 2026:
 
 - Focused metadata tests pass:
   `uv run pytest tests/test_meta.py -k 'duplicate_slide_associations_are_deduplicated or single_slide_full_nesting or two_slides_same_block'`
@@ -37,8 +34,6 @@ Verified on July 19, 2026:
   - `P-0002438`
   - `P-0048660`
   - `P-0011144`
-- Focused pathology timeline generator coverage exists in
-  `tests/test_generate_pathology_timeline_files.py`.
 
 ## What this wave does
 
@@ -47,18 +42,13 @@ Verified on July 19, 2026:
   - summary pathology timeline counts
   - match-filter counts in the WSI viewer
 - Keeps `sample_id = null` as the canonical representation for unmatched slides.
-- Produces a standard cBioPortal `TIMELINE` study file so pathology slide
-  events load through the existing `clinical_event` import path and become
-  available from the ClickHouse-backed clinical events API after study reload.
 
 ## What this wave does not do
 
 - It does not remove the legacy inline association SQL yet; runtime still keeps
   that path as a missing-table fallback.
 - It does not move patient summary, clinical-data pathology rows, or study-view
-  pathology counts off runtime augmentation and onto ClickHouse query paths by
-  itself; it only loads canonical pathology events into the cBioPortal
-  database.
+  pathology counts off runtime augmentation and onto ClickHouse.
 - It does not fully cut over downstream aggregation to the canonical table yet.
 
 ## Remaining waves
@@ -72,15 +62,10 @@ Verified on July 19, 2026:
   missing-table fallback to the legacy inline query.
 - Add explicit `association_version`, `updated_at`, `sample_bucket`, and
   `sample_label` in the shared upstream dataset.
-  Status on July 18, 2026: these fields are now emitted by
-  `tools/wsi_canonical_associations_pipeline.sql`, and downstream study-file
-  generation writes a `wsi_snapshot_manifest.json` derived from that snapshot.
 
 ### Wave 2
 
 - Point all tile-server association reads at the shared Databricks dataset.
-- Retire legacy WSI sample clinical attributes and timepoint columns from
-  study files before reloads.
 - Add patient-level cache invalidation tied to targeted backfills.
   Status on July 17, 2026: tile-server Redis patient cache eviction is now
   available through `app.cache.delete_patient(...)` and the operational helper
@@ -99,10 +84,6 @@ Verified on July 19, 2026:
   - patient summary pathology timeline
   - patient clinical-data pathology rows
   - study pathology sorting and counts
-  Status on July 19, 2026: canonical pathology timeline events can now be
-  generated as study `TIMELINE` files and imported into `clinical_event`.
-  Dedicated ClickHouse aggregates for pathology-specific grouping and study
-  sorting remain pending.
 
 ### Wave 4
 

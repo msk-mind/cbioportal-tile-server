@@ -36,29 +36,22 @@ def _env_csv(name: str, default: str) -> list[str]:
 
 @dataclass
 class Settings:
-    # WSI request authentication
     wsi_auth_secret: str = field(default_factory=lambda: _env_str("WSI_AUTH_SECRET"))
     wsi_auth_audience: str = field(default_factory=lambda: _env_str("WSI_AUTH_AUDIENCE", "cbioportal-wsi"))
     wsi_auth_required: bool = field(default_factory=lambda: _env_bool("WSI_AUTH_REQUIRED", True))
+    wsi_study_mapping_table: str = field(default_factory=lambda: _env_str("WSI_STUDY_MAPPING_TABLE"))
 
-    # S3 / Dell ECS connection
     aws_endpoint_url: str = field(default_factory=lambda: _env_str("AWS_ENDPOINT_URL", _aws_profile("endpoint_url", "")))
     aws_access_key_id: str = field(default_factory=lambda: _env_str("AWS_ACCESS_KEY_ID", _aws_profile("aws_access_key_id")))
     aws_secret_access_key: str = field(default_factory=lambda: _env_str("AWS_SECRET_ACCESS_KEY", _aws_profile("aws_secret_access_key")))
 
-    # Tile settings
     tile_size: int = field(default_factory=lambda: _env_int("TILE_SIZE", 256))
     jpeg_quality: int = field(default_factory=lambda: _env_int("JPEG_QUALITY", 85))
-
-    # Redis tile cache
     redis_url: str = field(default_factory=lambda: _env_str("REDIS_URL", "redis://redis:6379"))
     tile_cache_ttl: int = field(default_factory=lambda: _env_int("TILE_CACHE_TTL", 86_400))
-
-    # Slide cache / workers
     max_open_slides: int = field(default_factory=lambda: _env_int("MAX_OPEN_SLIDES", 64))
     n_workers: int = field(default_factory=lambda: _env_int("N_WORKERS", 4))
 
-    # Databricks SQL
     databricks_warehouse_id: str = field(
         default_factory=lambda: _env_str("DATABRICKS_WAREHOUSE_ID", _DEFAULT_WAREHOUSE_ID)
     )
@@ -68,15 +61,16 @@ class Settings:
     allow_legacy_association_fallback: bool = field(
         default_factory=lambda: _env_bool("ALLOW_LEGACY_ASSOCIATION_FALLBACK", False)
     )
-
-    # Metadata cache
     patient_cache_ttl: int = field(default_factory=lambda: _env_int("PATIENT_CACHE_TTL", 86_400))
-
-    # Block cache
     blockcache_path: str = field(default_factory=lambda: _env_str("BLOCKCACHE_PATH", ""))
     blockcache_block_size: int = field(default_factory=lambda: _env_int("BLOCKCACHE_BLOCK_SIZE", 8 * 1024 * 1024))
 
-    # CORS
+    annotation_database_url: str = field(default_factory=lambda: _env_str("ANNOTATION_DATABASE_URL"))
+    annotation_db_path: str = field(default_factory=lambda: _env_str("ANNOTATION_DB_PATH", "/data/annotations.db"))
+    keycloak_jwks_url: str = field(default_factory=lambda: _env_str("KEYCLOAK_JWKS_URL"))
+    annotation_auth_enabled: bool = field(default_factory=lambda: _env_bool("ANNOTATION_AUTH_ENABLED", True))
+    oncokb_api_token: str = field(default_factory=lambda: _env_str("ONCOKB_API_TOKEN"))
+
     cors_origins: list[str] = field(
         default_factory=lambda: _env_csv(
             "CORS_ORIGINS",

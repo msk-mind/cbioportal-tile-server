@@ -60,6 +60,8 @@ All settings are environment variables (see `app/config.py`):
 | `PATIENT_CACHE_TTL` | `86400` | Patient metadata cache TTL in seconds; `0` disables it |
 | `MAX_OPEN_SLIDES` | `64` | LRU slide cache capacity; benchmark-backed default |
 | `N_WORKERS` | `4` | Gunicorn worker count |
+| `ANNOTATION_DATABASE_URL` | — | Optional Postgres/Lakebase DSN for annotation storage |
+| `ANNOTATION_DB_PATH` | `/data/annotations.db` | SQLite path used when `ANNOTATION_DATABASE_URL` is unset |
 | `BLOCKCACHE_PATH` | — | NVMe block cache directory |
 | `BLOCKCACHE_BLOCK_SIZE` | `8388608` | Block-cache block size in bytes |
 | `USE_CANONICAL_ASSOCIATION_TABLE` | `true` | Read patient associations from the canonical snapshot |
@@ -76,3 +78,9 @@ only; requests must continue to work if the cache is unavailable.
 ```bash
 uv run pytest
 ```
+
+## Databricks bundles
+
+- Root [databricks.yml](databricks.yml) manages the nightly WSI summary pipeline job.
+- [databricks/lakebase/README.md](databricks/lakebase/README.md) documents the
+  separate Lakebase bundle used to provision annotation storage.

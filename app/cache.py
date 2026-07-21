@@ -88,6 +88,16 @@ async def _redis_set(key: str, data: bytes | str, ttl: int = 0) -> None:
         pass
 
 
+async def _redis_delete(key: str) -> bool:
+    """Guarded DELETE; returns False when cache is unavailable or on error."""
+    if not _redis:
+        return False
+    try:
+        return bool(await _redis.delete(key))
+    except Exception:
+        return False
+
+
 def _from_json(raw: bytes | None) -> object | None:
     return json.loads(raw) if raw else None
 
@@ -134,6 +144,10 @@ async def set_patient(patient_id: str, data: dict) -> None:
     if not settings.patient_cache_ttl:
         return
     await _redis_set_json(_patient_key(patient_id), data, ttl=settings.patient_cache_ttl)
+
+
+async def delete_patient(patient_id: str) -> bool:
+    return await _redis_delete(_patient_key(patient_id))
 
 
 # ---------------------------------------------------------------------------

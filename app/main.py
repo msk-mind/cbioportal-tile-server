@@ -27,8 +27,11 @@ from fastapi.middleware.cors import CORSMiddleware
 from . import cache as tile_cache
 from . import meta
 from .auth import InvalidWsiToken, validate_wsi_token
+from .annotations import init_db as init_annotation_db
+from .annotations import router as annotation_router
 from .config import settings
-from .meta import get_patient_hierarchy, get_slide_dbmeta, search_suggestions
+from .oncokb import router as oncokb_router
+from .meta import get_patient_hierarchy, get_scoped_slide, get_slide_dbmeta, search_suggestions
 from .slides import SlideCache
 from .tiles import get_thumbnail_bytes, get_tile_bytes, max_zoom, slide_metadata
 
@@ -58,6 +61,8 @@ async def lifespan(app: FastAPI):
         settings.max_open_slides,
         settings.aws_endpoint_url or "AWS default",
     )
+    await init_annotation_db()
+    logger.info("Annotation DB ready: %s", settings.annotation_db_path)
     yield
     _slides.close_all()
     await tile_cache.close_cache()
@@ -77,19 +82,19 @@ app = FastAPI(
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.cors_origins,
-    allow_methods=["GET"],
+    allow_methods=["GET", "POST", "PUT", "DELETE"],
     allow_headers=["*"],
 )
-
 
 @app.middleware("http")
 async def require_wsi_capability(request: Request, call_next):
     """Require a cBioPortal-issued capability for every non-health API request."""
     if request.scope["path"] in ("/health", "/wsi/health"):
         return await call_next(request)
+    if request.scope["path"].startswith("/annotations") or request.scope["path"].startswith("/api/oncokb"):
+        return await call_next(request)
     if not settings.wsi_auth_required:
         return await call_next(request)
-
     authorization = request.headers.get("authorization", "")
     if not authorization.startswith("Bearer "):
         return Response(status_code=401, headers={"WWW-Authenticate": "Bearer"})
@@ -114,6 +119,8 @@ async def wsi_namespace(request, call_next):
 
 TILE_CACHE_HEADERS  = {"Cache-Control": "private, max-age=3600"}
 THUMB_CACHE_HEADERS = {"Cache-Control": "private, max-age=300"}
+app.include_router(annotation_router)
+app.include_router(oncokb_router)
 # Patient/sample metadata contains PHI — must not be cached by shared/public proxies
 PHI_CACHE_HEADERS   = {"Cache-Control": "private, no-store"}
 

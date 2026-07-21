@@ -16,7 +16,7 @@ from tests.conftest import make_mock_slide
 
 
 @pytest.fixture(autouse=False)
-def api_client():
+def api_client(tmp_path):
     """
     TestClient with all external deps mocked:
     - Redis cache: all get/set → no-ops
@@ -41,6 +41,7 @@ def api_client():
         pass
 
     patches = [
+        patch.object(settings, "annotation_db_path", str(tmp_path / "annotations.db")),
         patch.object(cache_module, "init_cache",    _noop_init),
         patch.object(cache_module, "close_cache",   _noop_init),
         patch.object(cache_module, "get_tile",      _noop_get),

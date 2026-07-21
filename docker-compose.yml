@@ -23,19 +23,24 @@ services:
       DATABRICKS_TOKEN: ${DATABRICKS_TOKEN}
       DATABRICKS_WAREHOUSE_ID: ${DATABRICKS_WAREHOUSE_ID:-0b49b7d78734ad5c}
 
-      # ── WSI capability authentication ────────────────────────────────────
-      WSI_AUTH_SECRET: ${WSI_AUTH_SECRET:?WSI_AUTH_SECRET must be set}
-      WSI_AUTH_AUDIENCE: ${WSI_AUTH_AUDIENCE:-cbioportal-wsi}
-      WSI_AUTH_REQUIRED: ${WSI_AUTH_REQUIRED:-true}
-
       # ── Tile settings ─────────────────────────────────────────────────────
       TILE_SIZE: ${TILE_SIZE:-256}
       JPEG_QUALITY: ${JPEG_QUALITY:-85}
 
       # ── Redis cache ───────────────────────────────────────────────────────
-      REDIS_URL: redis://:${REDIS_PASSWORD:?REDIS_PASSWORD must be set}@redis:6379
+      REDIS_URL: redis://:${REDIS_PASSWORD:-}@redis:6379
       TILE_CACHE_TTL: ${TILE_CACHE_TTL:-86400}
       PATIENT_CACHE_TTL: ${PATIENT_CACHE_TTL:-300}   # 5 min for dev; 86400 in prod
+
+      # ── WSI capability authentication ───────────────────────────────────
+      # Local development has no cBioPortal session issuer; production must
+      # set WSI_AUTH_REQUIRED=true and provide the shared secret.
+      WSI_AUTH_SECRET: ${WSI_AUTH_SECRET:-}
+      WSI_AUTH_AUDIENCE: ${WSI_AUTH_AUDIENCE:-cbioportal-wsi}
+      WSI_AUTH_REQUIRED: ${WSI_AUTH_REQUIRED:-false}
+      # Required when WSI_AUTH_REQUIRED=true. The table must contain
+      # image_id and study_id for every slide exposed by a portal study.
+      WSI_STUDY_MAPPING_TABLE: ${WSI_STUDY_MAPPING_TABLE:-}
 
       # ── CORS — add the viewer origin so the browser can reach tile APIs ───
       CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:8080,http://localhost:3000,https://cbioportal.mskcc.org,https://triage.cbioportal.mskcc.org}

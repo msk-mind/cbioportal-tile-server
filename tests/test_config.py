@@ -18,7 +18,7 @@ def make_settings(**env):
     clean = {k: v for k, v in os.environ.items()
              if not k.startswith(("AWS_", "DATABRICKS_", "REDIS", "TILE_",
                                    "JPEG_", "MAX_", "N_WORKERS", "BLOCKCACHE",
-                                   "CORS_", "PATIENT_"))}
+                                   "CORS_", "PATIENT_", "ANNOTATION_", "KEYCLOAK_"))}
     clean.update(env)
     with patch.dict(os.environ, clean, clear=True):
         with patch("app.config._aws_profile", return_value=""):
@@ -85,6 +85,10 @@ class TestOtherSettings:
     def test_allow_legacy_association_fallback_can_be_enabled(self):
         s = make_settings(ALLOW_LEGACY_ASSOCIATION_FALLBACK="true")
         assert s.allow_legacy_association_fallback is True
+
+    def test_annotation_database_url_from_env(self):
+        s = make_settings(ANNOTATION_DATABASE_URL="postgresql://user:pass@host/db")
+        assert s.annotation_database_url == "postgresql://user:pass@host/db"
 
     def test_cors_origins_parsed(self):
         s = make_settings(CORS_ORIGINS="https://a.example.com,https://b.example.com")
