@@ -300,6 +300,7 @@ class TestGetPatientHierarchy:
             }
         ]
 
+<<<<<<< HEAD
     def test_conflicting_slide_association_buckets_prefer_block_match(self):
         association_rows = [
             _base_row(
@@ -353,6 +354,8 @@ class TestGetPatientHierarchy:
         assert len(result["samples"][0]["parts"][0]["blocks"]) == 1
         assert len(result["samples"][0]["parts"][0]["blocks"][0]["slides"]) == 1
 
+=======
+>>>>>>> 51ba4e3 (Consolidate WSI annotation prerequisites)
 
 # ---------------------------------------------------------------------------
 # get_slide_path
@@ -583,10 +586,14 @@ class TestPatientAssociationRows:
                 [{"image_id": "1"}],
             ],
         ) as mock_rq:
+<<<<<<< HEAD
             with patch.object(
                 meta_store.settings, "allow_legacy_association_fallback", True
             ):
                 rows = meta_store.get_patient_association_rows("P-0001", "wh-test")
+=======
+            rows = meta_store.get_patient_association_rows("P-0001", "wh-test")
+>>>>>>> 51ba4e3 (Consolidate WSI annotation prerequisites)
 
         assert rows == [{"image_id": "1"}]
         assert len(mock_rq.call_args_list) == 2
@@ -613,11 +620,16 @@ class TestPatientAssociationRows:
                 [{"image_id": "1"}],
             ],
         ):
+<<<<<<< HEAD
             with patch.object(
                 meta_store.settings, "allow_legacy_association_fallback", True
             ):
                 with caplog.at_level("WARNING"):
                     rows = meta_store.get_patient_association_rows("P-0001", "wh-test")
+=======
+            with caplog.at_level("WARNING"):
+                rows = meta_store.get_patient_association_rows("P-0001", "wh-test")
+>>>>>>> 51ba4e3 (Consolidate WSI annotation prerequisites)
 
         assert rows == [{"image_id": "1"}]
         assert "Falling back to legacy association SQL for patient P-0001" in caplog.text
@@ -657,6 +669,7 @@ class TestPatientAssociationRows:
 
         assert rows == [{"image_id": "1"}]
         assert "Querying canonical association table for patient P-0001" in caplog.text
+<<<<<<< HEAD
 
     def test_canonical_only_patient_still_builds_hierarchy(self):
         association_rows = [
@@ -704,3 +717,5 @@ class TestPatientAssociationRows:
         assert result["patient_id"] == "P-0001"
         assert result["samples"][0]["sample_id"] == "UNMATCHED"
         assert result["slide_associations"][0]["match_level"] == "UNMATCHED"
+=======
+>>>>>>> 51ba4e3 (Consolidate WSI annotation prerequisites)

@@ -11,7 +11,7 @@ DEID_TABLE = "cdsi_eng_phi.pdm_base_tables_dev.impact_block_matched_slides_v1"
 #: Legacy part-level sample ↔ slide relation with broader coverage than block matching
 PART_MATCH_TABLE = "cdsi_eng_phi.pdm_base_tables.impact_matched_slides"
 
-#: Cleaned slide-level universe used to scope diagnostic pathology coverage
+#: Cleaned slide-level universe used to scope diagnostic H&E / IHC counts
 CLEANED_SLIDE_TABLE = "cdsi_eng_phi.pdm_base_tables_dev.case_breakdown_cleaned_v2"
 
 #: Slide file inventory — contains s3:// paths for each image_id

@@ -158,87 +158,6 @@ def _association_identity(
     )
 
 
-def _association_path_rank(slide_path: str | None) -> int:
-    path = slide_path or ""
-    if path.startswith("s3://mskmind-bkt/reef-slides/"):
-        return 0
-    if path.startswith("s3://"):
-        return 1
-    return 2
-
-
-def _association_match_rank(match_level: str | None) -> int:
-    normalized = (match_level or "UNMATCHED").upper()
-    if normalized == "BLOCK":
-        return 0
-    if normalized == "PART":
-        return 1
-    if normalized == "UNMATCHED":
-        return 2
-    return 3
-
-
-def _canonical_association_preference(
-    row: dict[str, Any],
-) -> tuple[Any, ...]:
-    part_number, block_number, _ = _derive_block_fields(
-        row.get("block_id"),
-        row.get("block_label"),
-    )
-    part_token = (
-        f"{int(part_number):08d}" if isinstance(part_number, int) else "~~~~~~~~"
-    )
-    block_token = block_number or "~~~~~~~~"
-    return (
-        _association_path_rank(row.get("slide_path")),
-        _association_match_rank(row.get("match_level")),
-        0 if row.get("sample_id") else 1,
-        str(row.get("sample_id") or "~~~~~~~~"),
-        part_token,
-        block_token,
-        str(row.get("stain_group") or "~~~~~~~~"),
-        str(row.get("stain_name") or "~~~~~~~~"),
-        0 if row.get("part_description") else 1,
-        str(row.get("part_description") or "~~~~~~~~"),
-        0 if row.get("slide_timepoint_days") is not None else 1,
-        str(row.get("image_id") or ""),
-    )
-
-
-def _canonicalize_association_rows(
-    rows: list[dict[str, Any]]
-) -> list[dict[str, Any]]:
-    best_by_image_id: dict[str, dict[str, Any]] = {}
-
-    for row in rows:
-        image_id = str(row.get("image_id") or "").strip()
-        if not image_id:
-            continue
-
-        existing = best_by_image_id.get(image_id)
-        if existing is None:
-            best_by_image_id[image_id] = row
-            continue
-
-        if _canonical_association_preference(row) < _canonical_association_preference(
-            existing
-        ):
-            best_by_image_id[image_id] = row
-
-    canonical_rows = list(best_by_image_id.values())
-    canonical_rows.sort(
-        key=lambda row: (
-            str(row.get("sample_id") or ""),
-            _association_match_rank(row.get("match_level")),
-            row.get("slide_timepoint_days")
-            if row.get("slide_timepoint_days") is not None
-            else float("inf"),
-            str(row.get("image_id") or ""),
-        )
-    )
-    return canonical_rows
-
-
 def _assemble_slide_associations(rows: list[dict[str, Any]]) -> tuple[list[dict], str | None, str | None]:
     associations: list[dict] = []
     reference_sample_id: str | None = None
@@ -477,26 +396,28 @@ def _format_slide_suggestions(rows: list[dict[str, Any]]) -> list[dict]:
     ]
 
 
-def get_patient_hierarchy(patient_id: str, warehouse_id: str) -> dict | None:
+def get_patient_hierarchy(
+    patient_id: str, warehouse_id: str, study_id: str | None = None
+) -> dict | None:
     """
     Return a nested hierarchy dict:
       { patient_id, samples: [{ sample_id, cancer_type, …, parts: [{ part_number, …,
         blocks: [{ block_number, …, slides: [{ image_id, stain_name, … }] }] }] }] }
     Returns None if patient is not found in the table.
     """
-    rows = _run_query(meta_store.PATIENT_SQL, warehouse_id, [_param("patient_id", patient_id)])
-    association_rows = _canonicalize_association_rows(
-        meta_store.get_patient_association_rows(
+    rows = (
+        meta_store.get_scoped_patient_rows(patient_id, study_id, warehouse_id)
+        if study_id
+        else _run_query(meta_store.PATIENT_SQL, warehouse_id, [_param("patient_id", patient_id)])
+    )
+    if rows is None:
+        return None
+    if not rows:
+        return None
+    hierarchy = _assemble_patient_hierarchy(rows, patient_id)
+    association_rows = meta_store.get_patient_association_rows(
         patient_id,
         warehouse_id,
-        )
-    )
-    if not rows and not association_rows:
-        return None
-    hierarchy = (
-        _assemble_patient_hierarchy(rows, patient_id)
-        if rows
-        else {"patient_id": patient_id, "samples": []}
     )
     _merge_association_rows_into_hierarchy(hierarchy, association_rows)
     (
@@ -505,106 +426,6 @@ def get_patient_hierarchy(patient_id: str, warehouse_id: str) -> dict | None:
         hierarchy["reference_sequencing_date"],
     ) = _assemble_slide_associations(association_rows)
     return hierarchy
-    # The legacy inline hierarchy builder below is retained for compatibility
-    # with the historical patch sequence but is unreachable after canonical
-    # hierarchy assembly above.
-
-    samples: dict[str, dict] = {}
-
-    for r in rows:
-        sid   = r.get("SAMPLE_ID_IMPACT") or ""
-        pnum  = r.get("PART_NUMBER")
-        bnum  = str(r.get("BLOCK_NUMBER") or "")
-        pkey  = str(pnum) if pnum is not None else "?"
-        slide_url = r.get("slide_path") or ""
-        can_serve = slide_url.startswith("s3://")
-
-        if sid not in samples:
-            samples[sid] = {
-                "sample_id":               sid,
-                "cancer_type":             r.get("CANCER_TYPE"),
-                "cancer_type_detailed":    r.get("CANCER_TYPE_DETAILED"),
-                "oncotree_code":           r.get("ONCOTREE_CODE"),
-                "primary_site":            r.get("PRIMARY_SITE"),
-                "sample_type":             r.get("SAMPLE_TYPE"),
-                "metastatic_site":         r.get("METASTATIC_SITE"),
-                "tumor_purity":            _coerce(r.get("TUMOR_PURITY")),
-                "oncogenic_mutations":     r.get("ONCOGENIC_MUTATIONS"),
-                "num_oncogenic_mutations": _coerce(r.get("NUM_ONCOGENIC_MUTATIONS")),
-                "tmb_score":               _coerce(r.get("CVR_TMB_SCORE")),
-                "msi_type":                r.get("MSI_TYPE"),
-                "parts": {},
-            }
-
-        s = samples[sid]
-
-        if pkey not in s["parts"]:
-            s["parts"][pkey] = {
-                "part_number":      pnum,
-                "part_designator":  r.get("part_designator"),
-                "part_type":        r.get("part_type"),
-                "part_description": r.get("part_description"),
-                "subspecialty":     r.get("subspecialty"),
-                "path_dx_title":    r.get("PATH_DX_SPEC_TITLE"),
-                "blocks": {},
-            }
-
-        p = s["parts"][pkey]
-
-        if bnum not in p["blocks"]:
-            p["blocks"][bnum] = {
-                "block_number": bnum,
-                "block_label":  r.get("BLOCK_LABEL"),
-                "slides": [],
-            }
-
-        p["blocks"][bnum]["slides"].append({
-            "image_id":        str(r.get("image_id")),
-            "stain_name":      r.get("stain_name"),
-            "stain_group":     r.get("stain_group"),
-            "is_hne":          str(r.get("IS_HNE","0")) == "1",
-            "is_ihc":          str(r.get("IS_IHC","0")) == "1",
-            "magnification":   r.get("magnification"),
-            "file_size_bytes": _coerce(r.get("file_size_bytes")),
-            "can_serve_tiles": can_serve,
-            "barcode":         r.get("barcode"),
-            "block_label":     r.get("BLOCK_LABEL"),
-            "block_number":    r.get("BLOCK_NUMBER"),
-            # Part-level anatomical context propagated to slide for frontend display
-            "part_description": r.get("part_description"),
-            "path_dx_title":    r.get("PATH_DX_SPEC_TITLE"),
-        })
-
-    # Clinical sort order for stain groups
-    _STAIN_ORDER = {
-        "h&e (initial)": 0,
-        "h&e (other)":   1,
-        "ihc":           2,
-    }
-
-    def _slide_sort_key(sl: dict) -> tuple:
-        group = (sl.get("stain_group") or "").lower()
-        order = _STAIN_ORDER.get(group, 3)
-        return (order, (sl.get("stain_name") or "").lower())
-
-    result: list[dict] = []
-    for s in samples.values():
-        parts_list = []
-        for p in s["parts"].values():
-            blocks_list = []
-            for b in p["blocks"].values():
-                b["slides"].sort(key=_slide_sort_key)
-                blocks_list.append(b)
-            # Also sort blocks so real blocks (with label) come after unblocked slides
-            blocks_list.sort(key=lambda b: (0 if not (b.get("block_label") or "").strip() else 1))
-            p_out = {k: v for k, v in p.items() if k != "blocks"}
-            p_out["blocks"] = blocks_list
-            parts_list.append(p_out)
-        s_out = {k: v for k, v in s.items() if k != "parts"}
-        s_out["parts"] = parts_list
-        result.append(s_out)
-
-    return {"patient_id": patient_id, "samples": result}
 
 
 def get_slide_dbmeta(image_id: str, warehouse_id: str) -> dict | None:
@@ -613,6 +434,12 @@ def get_slide_dbmeta(image_id: str, warehouse_id: str) -> dict | None:
     if not rows:
         return None
     return {k: _coerce(v) for k, v in rows[0].items()}
+
+
+def get_scoped_slide(image_id: str, study_id: str, warehouse_id: str) -> dict | None:
+    """Return a slide only when the curated mapping binds it to the study."""
+    row = meta_store.get_scoped_slide_row(image_id, study_id, warehouse_id)
+    return {k: _coerce(v) for k, v in row.items()} if row else None
 
 
 def get_slide_path(image_id: str, warehouse_id: str) -> str | None:

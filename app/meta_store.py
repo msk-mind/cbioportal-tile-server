@@ -114,6 +114,17 @@ WHERE image_id = :image_id
 LIMIT 1
 """
 
+def scoped_slide_sql() -> str | None:
+    if not settings.wsi_study_mapping_table:
+        return None
+    return f"""
+SELECT CAST(m.study_id AS STRING) AS study_id
+FROM {settings.wsi_study_mapping_table} m
+WHERE CAST(m.image_id AS STRING) = :image_id
+  AND m.study_id = :study_id
+LIMIT 1
+"""
+
 SLIDE_PATH_SQL = f"""
 SELECT path FROM {_INVENTORY}
 WHERE image_id = :image_id
@@ -487,26 +498,17 @@ canonical_associations AS (
             ROW_NUMBER() OVER (
                 PARTITION BY
                     associations_raw.patient_id,
-                    associations_raw.image_id
+                    COALESCE(associations_raw.sample_id, '__UNMATCHED__'),
+                    associations_raw.image_id,
+                    associations_raw.match_level,
+                    COALESCE(associations_raw.block_id, ''),
+                    COALESCE(associations_raw.block_label, '')
                 ORDER BY
                     CASE
                         WHEN associations_raw.slide_path LIKE 's3://mskmind-bkt/reef-slides/%%' THEN 0
                         WHEN associations_raw.slide_path LIKE 's3://%%' THEN 1
                         ELSE 2
                     END,
-                    CASE associations_raw.match_level
-                        WHEN 'BLOCK' THEN 0
-                        WHEN 'PART' THEN 1
-                        WHEN 'UNMATCHED' THEN 2
-                        ELSE 3
-                    END,
-                    CASE
-                        WHEN associations_raw.sample_id IS NOT NULL THEN 0
-                        ELSE 1
-                    END,
-                    COALESCE(associations_raw.sample_id, '~~~~~~~~'),
-                    COALESCE(associations_raw.block_id, '~~~~~~~~'),
-                    COALESCE(associations_raw.block_label, '~~~~~~~~'),
                     CASE
                         WHEN associations_raw.procedure_date IS NOT NULL THEN 0
                         ELSE 1
@@ -682,8 +684,48 @@ def get_patient_rows(patient_id: str, warehouse_id: str) -> list[dict[str, Any]]
     return run_query(PATIENT_SQL, warehouse_id, [param("patient_id", patient_id)])
 
 
+def scoped_patient_sql() -> str | None:
+    if not settings.wsi_study_mapping_table:
+        return None
+    return PATIENT_SQL.replace(
+        f"FROM {_TABLE} d",
+        f"FROM {_TABLE} d INNER JOIN {settings.wsi_study_mapping_table} m "
+        "ON CAST(d.image_id AS STRING) = CAST(m.image_id AS STRING)",
+    ).replace(
+        "WHERE d.PATIENT_ID = :patient_id",
+        "WHERE d.PATIENT_ID = :patient_id AND m.study_id = :study_id",
+    )
+
+
+def get_scoped_patient_rows(
+    patient_id: str, study_id: str, warehouse_id: str
+) -> list[dict[str, Any]] | None:
+    sql = scoped_patient_sql()
+    if sql is None:
+        return None
+    return run_query(
+        sql,
+        warehouse_id,
+        [param("patient_id", patient_id), param("study_id", study_id)],
+    )
+
+
 def get_slide_row(image_id: str, warehouse_id: str) -> dict[str, Any] | None:
     rows = run_query(SLIDE_SQL, warehouse_id, [param("image_id", str(image_id))])
+    return rows[0] if rows else None
+
+
+def get_scoped_slide_row(
+    image_id: str, study_id: str, warehouse_id: str
+) -> dict[str, Any] | None:
+    sql = scoped_slide_sql()
+    if sql is None:
+        return None
+    rows = run_query(
+        sql,
+        warehouse_id,
+        [param("image_id", str(image_id)), param("study_id", study_id)],
+    )
     return rows[0] if rows else None
 
 

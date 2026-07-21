@@ -7,12 +7,14 @@
 # pathology snapshot, and then refreshes PATIENT-level slide resources.
 #
 # Usage (from repo root):
-#   bash tools/migrate_all_studies.sh [--dry-run] [--private-dir <path>]
+#   bash tools/migrate_all_studies.sh [--dry-run] [--private-dir <path>] [--invalidate-patient-cache]
 #
 # Env / flags:
 #   PRIVATE_DIR  — path to automation_tool_datasets/ (default: ../private/automation_tool_datasets)
-#   BASE_URL     — tile server URL (default: https://slides.cbioportal.org)
+#   BASE_URL     — WSI namespace URL (default: https://cbioportal.mskcc.org/wsi)
 #   --dry-run    — passed through to the Python tool (no files written)
+#   --invalidate-patient-cache
+#                — evict tile-server patient cache entries for each processed study
 
 set -euo pipefail
 
@@ -20,14 +22,16 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 
 PRIVATE_DIR="${PRIVATE_DIR:-$REPO_ROOT/../private/automation_tool_datasets}"
-BASE_URL="${BASE_URL:-https://slides.cbioportal.org}"
+BASE_URL="${BASE_URL:-https://cbioportal.mskcc.org/wsi}"
 DRY_RUN=""
+INVALIDATE_PATIENT_CACHE=""
 LOG_FILE="$REPO_ROOT/docs/migration_$(date +%Y%m%d_%H%M%S).log"
 
 # Parse flags
 for arg in "$@"; do
   case "$arg" in
     --dry-run) DRY_RUN="--dry-run" ;;
+    --invalidate-patient-cache) INVALIDATE_PATIENT_CACHE="--invalidate-patient-cache" ;;
     --private-dir=*) PRIVATE_DIR="${arg#*=}" ;;
     --private-dir) shift; PRIVATE_DIR="$1" ;;
   esac
@@ -55,6 +59,7 @@ echo "=== Migration started $(date) ===" | tee "$LOG_FILE"
 echo "PRIVATE_DIR : $PRIVATE_DIR"       | tee -a "$LOG_FILE"
 echo "BASE_URL    : $BASE_URL"           | tee -a "$LOG_FILE"
 echo "DRY_RUN     : ${DRY_RUN:-no}"     | tee -a "$LOG_FILE"
+echo "INVALIDATE  : ${INVALIDATE_PATIENT_CACHE:-no}" | tee -a "$LOG_FILE"
 echo ""                                  | tee -a "$LOG_FILE"
 
 PASS=0; FAIL=0; SKIP=0
@@ -89,6 +94,7 @@ for study in "${STUDIES[@]}"; do
   python3 "$REPO_ROOT/tools/generate_resource_patient.py" \
     --study-dir "$dir" \
     --base-url "$BASE_URL" \
+    ${INVALIDATE_PATIENT_CACHE:+--invalidate-patient-cache} \
     ${DRY_RUN:+--dry-run} 2>&1 | tee -a "$LOG_FILE"
   rc=${PIPESTATUS[0]}
   set -e

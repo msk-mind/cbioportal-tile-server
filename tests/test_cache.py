@@ -47,6 +47,7 @@ def _make_redis():
     r.get    = AsyncMock(return_value=None)
     r.set    = AsyncMock()
     r.setex  = AsyncMock()
+    r.delete = AsyncMock(return_value=1)
     return r
 
 
@@ -80,6 +81,12 @@ class TestKeyFormats:
             await cache_module.get_patient("P-0001")
         r.get.assert_called_once_with("patient:P-0001")
 
+    async def test_delete_patient_key(self):
+        r = _make_redis()
+        with patch.object(cache_module, "_redis", r):
+            await cache_module.delete_patient("P-0001")
+        r.delete.assert_called_once_with("patient:P-0001")
+
 
 # ---------------------------------------------------------------------------
 # TTL behaviour
@@ -103,6 +110,26 @@ class TestTtlBehaviour:
         args = r.setex.call_args[0]
         assert args[0] == "search:foo"
         assert args[1] == 300          # TTL in seconds
+
+
+class TestDeletion:
+    async def test_delete_patient_returns_true_when_deleted(self):
+        r = _make_redis()
+        with patch.object(cache_module, "_redis", r):
+            result = await cache_module.delete_patient("P-0001")
+        assert result is True
+
+    async def test_delete_patient_returns_false_when_cache_unavailable(self):
+        with patch.object(cache_module, "_redis", None):
+            result = await cache_module.delete_patient("P-0001")
+        assert result is False
+
+    async def test_delete_patient_returns_false_on_redis_error(self):
+        r = _make_redis()
+        r.delete = AsyncMock(side_effect=RuntimeError("redis unavailable"))
+        with patch.object(cache_module, "_redis", r):
+            result = await cache_module.delete_patient("P-0001")
+        assert result is False
 
 
 # ---------------------------------------------------------------------------

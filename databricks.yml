@@ -25,11 +25,14 @@ resources:
       name: "[${bundle.target}] WSI Summary Pipeline"
       description: >
         Nightly job that first materializes the canonical patient/sample/slide
-        association universe and then derives the legacy sample summary table
-        from that shared snapshot for compatibility consumers.
+        association universe and then computes per-sample WSI slide
+        availability stats (servable_slide_count,
+        non_servable_hne_slide_count, non_servable_ihc_slide_count, has_hne,
+        has_ihc, stain_types) for use by the cBioPortal tile server and
+        study-import tooling.
 
       schedule:
-        quartz_cron_expression: "0 0 3 * * ?"
+        quartz_cron_expression: "0 0 3 * * ?"   # 03:00 UTC every day
         timezone_id: UTC
         pause_status: UNPAUSED
 
@@ -56,4 +59,5 @@ resources:
         on_failure:
           - limr@mskcc.org
 
+      # Keep 7 run records for debugging
       max_concurrent_runs: 1

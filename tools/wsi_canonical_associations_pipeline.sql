@@ -346,26 +346,17 @@ canonical_associations AS (
             ROW_NUMBER() OVER (
                 PARTITION BY
                     associations_raw.patient_id,
-                    associations_raw.image_id
+                    COALESCE(associations_raw.sample_id, '__UNMATCHED__'),
+                    associations_raw.image_id,
+                    associations_raw.match_level,
+                    COALESCE(associations_raw.block_id, ''),
+                    COALESCE(associations_raw.block_label, '')
                 ORDER BY
                     CASE
                         WHEN associations_raw.slide_path LIKE 's3://mskmind-bkt/reef-slides/%' THEN 0
                         WHEN associations_raw.slide_path LIKE 's3://%' THEN 1
                         ELSE 2
                     END,
-                    CASE associations_raw.match_level
-                        WHEN 'BLOCK' THEN 0
-                        WHEN 'PART' THEN 1
-                        WHEN 'UNMATCHED' THEN 2
-                        ELSE 3
-                    END,
-                    CASE
-                        WHEN associations_raw.sample_id IS NOT NULL THEN 0
-                        ELSE 1
-                    END,
-                    COALESCE(associations_raw.sample_id, '~~~~~~~~'),
-                    COALESCE(associations_raw.block_id, '~~~~~~~~'),
-                    COALESCE(associations_raw.block_label, '~~~~~~~~'),
                     CASE
                         WHEN associations_raw.procedure_date IS NOT NULL THEN 0
                         ELSE 1
@@ -385,13 +376,6 @@ canonical_associations AS (
     WHERE ranked_associations.association_row_num = 1
 )
 SELECT
-    'canonical_slide_associations_v1' AS association_version,
-    CURRENT_TIMESTAMP() AS updated_at,
-    COALESCE(associations.sample_id, '__UNMATCHED__') AS sample_bucket,
-    CASE
-        WHEN associations.sample_id IS NULL THEN 'Unmatched pathology slides'
-        ELSE associations.sample_id
-    END AS sample_label,
     associations.match_level,
     associations.patient_id,
     associations.sample_id,
