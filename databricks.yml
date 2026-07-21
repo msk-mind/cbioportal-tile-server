@@ -1,7 +1,8 @@
 bundle:
   name: cbioportal-tile-server
 
-# Databricks Asset Bundle — manages the nightly WSI summary pipeline job.
+# Databricks Asset Bundle — manages the nightly canonical association and WSI
+# summary pipeline jobs.
 # Deploy:   databricks bundle deploy
 # Run once: databricks bundle run wsi-summary-pipeline
 # Destroy:  databricks bundle destroy
@@ -23,19 +24,28 @@ resources:
     wsi-summary-pipeline:
       name: "[${bundle.target}] WSI Summary Pipeline"
       description: >
-        Nightly job that computes per-sample WSI slide availability stats
-        (servable_slide_count, has_hne, has_ihc, stain_types) and writes them
-        to cdsi_prod.pathology_data_mining.sample_wsi_summary for use by
-        the cBioPortal tile server and study-import tooling.
+        Nightly job that first materializes the canonical patient/sample/slide
+        association universe and then derives the legacy sample summary table
+        from that shared snapshot for compatibility consumers.
 
       schedule:
-        quartz_cron_expression: "0 0 3 * * ?"   # 03:00 UTC every day
+        quartz_cron_expression: "0 0 3 * * ?"
         timezone_id: UTC
         pause_status: UNPAUSED
 
       tasks:
+        - task_key: compute-canonical-associations
+          description: Run wsi_canonical_associations_pipeline.sql on serverless compute
+          sql_task:
+            warehouse_id: "0b49b7d78734ad5c"
+            file:
+              path: tools/wsi_canonical_associations_pipeline.sql
+              source: WORKSPACE
+
         - task_key: compute-wsi-summary
           description: Run wsi_summary_pipeline.sql on serverless compute
+          depends_on:
+            - task_key: compute-canonical-associations
           sql_task:
             warehouse_id: "0b49b7d78734ad5c"
             file:
@@ -46,5 +56,4 @@ resources:
         on_failure:
           - limr@mskcc.org
 
-      # Keep 7 run records for debugging
       max_concurrent_runs: 1

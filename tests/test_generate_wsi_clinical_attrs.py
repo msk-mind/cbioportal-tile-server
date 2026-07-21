@@ -1,17 +1,32 @@
 from pathlib import Path
 
-from tools.generate_wsi_clinical_attrs import _read_sample_ids
+from tools.generate_wsi_clinical_attrs import main
 
 
-def test_read_sample_ids_uses_sample_id_column(tmp_path: Path):
+def test_cleanup_removes_legacy_wsi_sample_attributes_and_sidecar_files(
+    tmp_path: Path,
+):
     study_dir = tmp_path / "study"
     study_dir.mkdir()
-    (study_dir / "data_clinical_sample.txt").write_text(
-        "# comment\n"
-        "SAMPLE_ID\tPATIENT_ID\tOTHER\n"
-        "S-0001\tP-0001\tx\n"
-        "S-0002\tP-0002\ty\n",
+    clinical_file = study_dir / "data_clinical_sample.txt"
+    clinical_file.write_text(
+        "#Sample Identifier\tPatient Identifier\tHas WSI Slide\tWSI Slide Count\tOther\n"
+        "#Sample identifier\tPatient identifier\tLegacy\tLegacy\tOther\n"
+        "#STRING\tSTRING\tSTRING\tNUMBER\tSTRING\n"
+        "#1\t1\t1\t1\t1\n"
+        "SAMPLE_ID\tPATIENT_ID\tHAS_WSI_SLIDE\tWSI_SLIDE_COUNT\tOTHER\n"
+        "S-0001\tP-0001\tYes\t4\tkeep\n",
         encoding="utf-8",
     )
+    (study_dir / "meta_clinical_sample_wsi.txt").write_text("legacy", encoding="utf-8")
+    (study_dir / "data_clinical_sample_wsi.txt").write_text("legacy", encoding="utf-8")
 
-    assert _read_sample_ids(study_dir) == ["S-0001", "S-0002"]
+    exit_code = main(["--study-dir", str(study_dir)])
+
+    assert exit_code == 0
+    contents = clinical_file.read_text(encoding="utf-8")
+    assert "HAS_WSI_SLIDE" not in contents
+    assert "WSI_SLIDE_COUNT" not in contents
+    assert "OTHER" in contents
+    assert not (study_dir / "meta_clinical_sample_wsi.txt").exists()
+    assert not (study_dir / "data_clinical_sample_wsi.txt").exists()
