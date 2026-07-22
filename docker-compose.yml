@@ -45,7 +45,9 @@ services:
       N_WORKERS: ${N_WORKERS:-4}
 
       # ── fsspec BlockCache — point at a fast local disk (NVMe preferred) ──
-      BLOCKCACHE_PATH: ${BLOCKCACHE_PATH:-}
+      # The named volume above keeps cold SVS range reads local between
+      # requests. Set BLOCKCACHE_PATH empty explicitly to disable it.
+      BLOCKCACHE_PATH: ${BLOCKCACHE_PATH:-/cache/slide-blocks}
       BLOCKCACHE_BLOCK_SIZE: ${BLOCKCACHE_BLOCK_SIZE:-8388608}   # 8 MB
     volumes:
       - slide_blocks:/cache/slide-blocks

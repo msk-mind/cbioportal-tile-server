@@ -60,7 +60,7 @@ All settings are environment variables (see `app/config.py`):
 | `PATIENT_CACHE_TTL` | `86400` | Patient metadata cache TTL in seconds; `0` disables it |
 | `MAX_OPEN_SLIDES` | `64` | LRU slide cache capacity; benchmark-backed default |
 | `N_WORKERS` | `4` | Gunicorn worker count |
-| `BLOCKCACHE_PATH` | — | NVMe block cache directory |
+| `BLOCKCACHE_PATH` | `/cache/slide-blocks` (Docker Compose) | Local block cache directory for SVS range reads; set empty to disable |
 | `BLOCKCACHE_BLOCK_SIZE` | `8388608` | Block-cache block size in bytes |
 | `USE_CANONICAL_ASSOCIATION_TABLE` | `true` | Read patient associations from the canonical snapshot |
 | `ALLOW_LEGACY_ASSOCIATION_FALLBACK` | `false` | Permit fallback if the canonical table is unavailable |
