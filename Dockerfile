@@ -25,6 +25,8 @@ RUN uv sync --frozen --no-dev
 ENV PATH="/app/.venv/bin:$PATH"
 
 RUN useradd --no-create-home --shell /bin/false appuser
+# A fresh named volume mounted at this path inherits this ownership.
+RUN mkdir -p /cache/slide-blocks && chown -R appuser:appuser /cache
 USER appuser
 
 EXPOSE 8080
